@@ -1,0 +1,28 @@
+{
+  "duration_days": 60,
+  "poll_interval_hours": 2,
+  "source": "CelesTrak GP API",
+  "default_query": {
+    "catnr": ["25544", "25338", "20580", "25994", "27424"],
+    "groups": [],
+    "max_objects": 75
+  },
+  "simulation": {
+    "leo_min_altitude_km": 160,
+    "leo_max_altitude_km": 2000,
+    "horizon_minutes": 720,
+    "step_minutes": 5,
+    "candidate_threshold_km": 10000,
+    "fixed_threshold_km": 5000,
+    "label_threshold_km": 3000,
+    "severe_distance_km": 1000,
+    "label_relative_velocity_km_s": 7,
+    "label_tca_minutes": 720
+  },
+  "outputs": {
+    "snapshots": "data/tle_snapshots",
+    "runs": "outputs/runs",
+    "history": "outputs/history/conjunction_observations.csv",
+    "time_split_report": "outputs/history/model_comparison_time_split.csv"
+  }
+}

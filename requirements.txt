@@ -1,0 +1,6 @@
+skyfield>=1.54
+numpy>=2.0
+pandas>=2.0
+scikit-learn>=1.4
+matplotlib>=3.8
+xgboost>=2.0
