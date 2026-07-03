@@ -24,12 +24,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--step-minutes", type=int, default=5)
     parser.add_argument("--leo-min-altitude-km", type=float, default=160.0)
     parser.add_argument("--leo-max-altitude-km", type=float, default=2000.0)
-    parser.add_argument("--candidate-threshold-km", type=float, default=10000.0)
-    parser.add_argument("--fixed-threshold-km", type=float, default=5000.0)
-    parser.add_argument("--label-threshold-km", type=float, default=3000.0)
-    parser.add_argument("--severe-distance-km", type=float, default=1000.0)
-    parser.add_argument("--label-relative-velocity-km-s", type=float, default=7.0)
-    parser.add_argument("--label-tca-minutes", type=float, default=720.0)
+    # Physical conjunction-screening scales (km). Operational SSA screening
+    # volumes are a few km; these are widened for a sparse public-TLE demo but
+    # are still physically interpretable, unlike the previous 3000-10000 km.
+    parser.add_argument("--candidate-threshold-km", type=float, default=50.0,
+                        help="keep pairs whose closest approach is within this radius")
+    parser.add_argument("--fixed-threshold-km", type=float, default=25.0,
+                        help="classical baseline: alarm if min distance <= this")
+    parser.add_argument("--label-threshold-km", type=float, default=20.0,
+                        help="ground-truth screening radius for risk_label")
+    parser.add_argument("--label-relative-velocity-km-s", type=float, default=10.0,
+                        help="ground-truth: risky only if v_rel >= this at TCA")
+    parser.add_argument("--max-tle-age-hours", type=float, default=336.0,
+                        help="warn if any TLE epoch is older than this (default 14 days)")
     return parser.parse_args()
 
 
@@ -51,9 +58,8 @@ def main() -> None:
         leo_max_altitude_km=args.leo_max_altitude_km,
         fixed_threshold_km=args.fixed_threshold_km,
         label_threshold_km=args.label_threshold_km,
-        severe_distance_km=args.severe_distance_km,
         label_relative_velocity_km_s=args.label_relative_velocity_km_s,
-        label_tca_minutes=args.label_tca_minutes,
+        max_tle_age_hours=args.max_tle_age_hours,
     )
     conjunctions = filter_conjunctions(rows, args.candidate_threshold_km)
 
@@ -63,11 +69,17 @@ def main() -> None:
     top_pair_timeseries_path = output_dir / "top_pair_distance_timeseries.csv"
     top_pair_plot_path = output_dir / "top_pair_distance.png"
 
+    # ``dataset_path`` keeps every simulated pair for inspection, but — per the
+    # paper — the classifier is trained on the *identified conjunctions* only.
+    # This screening step is what makes the problem non-trivial: within the
+    # candidate set, distance alone no longer separates risky from non-risky,
+    # so a fixed-distance baseline starts making mistakes that the ML models
+    # can avoid.
     write_pair_results(dataset_path, rows)
     write_pair_results(conjunction_path, conjunctions)
-    report = compare_models(dataset_path, ml_report_path)
+    report = compare_models(conjunction_path, ml_report_path)
     scientific_plots = create_pipeline_plots(
-        dataset_path=dataset_path,
+        dataset_path=conjunction_path,
         model_report_path=ml_report_path,
         output_dir=output_dir,
         candidate_threshold_km=args.candidate_threshold_km,

@@ -1,0 +1,50 @@
+Align pipeline with IAC 2026 abstract: remove target leakage, use physical
+thresholds, add TLE-age guard, tests, and packaging
+
+WHY
+The code did not yet support the paper's central claim that ML gives a
+"reduced false alarm rate compared to classical fixed-distance threshold
+methods." As written, the fixed-threshold baseline scored a perfect 1.00
+because the ML target (risk_label) was derived from risk_score, which was also
+a model feature — a self-referential, trivially separable task (target
+leakage). Thresholds were also 3000-10000 km, which is not physically
+meaningful for conjunction screening, and the sample TLEs were ~2.5 years old.
+
+SCIENTIFIC FIXES
+- Remove target leakage: risk_score is dropped from the ML feature set; a unit
+  test enforces this. (src/space_debris/ml.py)
+- Physics-based label: risk_label now couples minimum approach distance AND
+  relative velocity at TCA, so a distance-only fixed threshold necessarily
+  makes the false-positive / false-negative errors the ML models can correct.
+  (src/space_debris/core.py)
+- Physical thresholds: defaults changed from thousands of km to interpretable
+  screening scales (tens to a few hundred km). (run_pipeline.py, config)
+- TLE-age data-quality warning when any epoch exceeds --max-tle-age-hours
+  (default 14 days), since SGP4 error grows with age. (core.py)
+- ML now trains on the *identified conjunctions* (screened candidates), matching
+  the paper's methodology, not on all pairs. (run_pipeline.py)
+
+ROBUSTNESS FIXES
+- Guard against single-class training splits (previously crashed sklearn).
+- Fix NaN-to-int crash in plot_model_metrics on small datasets; render an
+  informative placeholder instead. (plots.py)
+- Fix __init__ exports (ml, plots).
+
+REPRODUCIBILITY / TOOLING
+- src/make_demo_tles.py: deterministic SYNTHETIC LEO catalogue (DEMO-SAT-xx)
+  so the full pipeline and ML comparison can run offline. Clearly labelled as
+  not real observations; real runs use fetch_tles.py.
+- Add tests/ (distance/altitude math, label logic, no-leakage guarantee,
+  propagation smoke test) and pyproject.toml (installable, pytest pythonpath).
+- Move the old step1..step10 prototypes to src/legacy/ with a README; they had
+  hard-coded Windows paths, stale embedded TLEs, and duplicated code
+  (step9/step10) and are kept for reference only.
+- Rewrite README to document the honest scientific scope (no true Pc), the
+  offline demo, real-data runs, and the 60-day collection needed for a
+  meaningful ML comparison.
+
+NOTE ON RESULTS
+On a single snapshot the candidate set is small, so no classifier reliably
+beats the baseline — this is a statistical limitation, not a bug, and is now
+documented. The paper's comparison should be run on accumulated observations
+via collect_observations.py + train_from_history.py (chronological split).

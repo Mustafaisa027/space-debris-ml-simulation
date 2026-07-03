@@ -187,6 +187,23 @@ def plot_model_metrics(report_path: Path, output_path: Path) -> None:
     if df.empty or "model" not in df:
         return
 
+    # A "not_enough_data" report has no numeric metrics to plot.
+    if "note" in df.columns and df["model"].astype(str).eq("not_enough_data").any():
+        _ensure_dir(output_path)
+        plt.figure(figsize=(9, 5))
+        plt.axis("off")
+        note = str(df["note"].dropna().iloc[0]) if df["note"].notna().any() else \
+            "Not enough data to train models."
+        plt.text(
+            0.5, 0.5,
+            "Model comparison unavailable\n" + note,
+            ha="center", va="center", fontsize=12, wrap=True,
+        )
+        plt.tight_layout()
+        plt.savefig(output_path, dpi=180)
+        plt.close()
+        return
+
     metrics = ["precision", "recall", "f1", "accuracy"]
     available = [metric for metric in metrics if metric in df.columns]
     plot_df = df[["model"] + available].copy()
@@ -196,8 +213,8 @@ def plot_model_metrics(report_path: Path, output_path: Path) -> None:
     _ensure_dir(output_path)
     x = np.arange(len(plot_df))
     width = 0.18
-    train_rows = int(pd.to_numeric(df.get("train_rows", pd.Series([0])), errors="coerce").max() or 0)
-    test_rows = int(pd.to_numeric(df.get("test_rows", pd.Series([0])), errors="coerce").max() or 0)
+    train_rows = int(pd.to_numeric(df.get("train_rows", pd.Series([0])), errors="coerce").fillna(0).max() or 0)
+    test_rows = int(pd.to_numeric(df.get("test_rows", pd.Series([0])), errors="coerce").fillna(0).max() or 0)
     plt.figure(figsize=(11, 6))
     for index, metric in enumerate(available):
         offset = (index - (len(available) - 1) / 2) * width

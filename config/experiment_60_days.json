@@ -2,6 +2,7 @@
   "duration_days": 60,
   "poll_interval_hours": 2,
   "source": "CelesTrak GP API",
+  "note": "Thresholds are in km and are physically interpretable conjunction-screening scales, not the earlier 3000-10000 km placeholders.",
   "default_query": {
     "catnr": ["25544", "25338", "20580", "25994", "27424"],
     "groups": [],
@@ -11,13 +12,12 @@
     "leo_min_altitude_km": 160,
     "leo_max_altitude_km": 2000,
     "horizon_minutes": 720,
-    "step_minutes": 5,
-    "candidate_threshold_km": 10000,
-    "fixed_threshold_km": 5000,
-    "label_threshold_km": 3000,
-    "severe_distance_km": 1000,
-    "label_relative_velocity_km_s": 7,
-    "label_tca_minutes": 720
+    "step_minutes": 3,
+    "candidate_threshold_km": 200,
+    "fixed_threshold_km": 25,
+    "label_threshold_km": 50,
+    "label_relative_velocity_km_s": 10,
+    "max_tle_age_hours": 336
   },
   "outputs": {
     "snapshots": "data/tle_snapshots",

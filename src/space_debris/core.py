@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import math
+import warnings
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from itertools import combinations
@@ -85,21 +86,34 @@ def _tle_age_hours(sat: EarthSatellite, reference_utc: datetime) -> float:
     return abs((reference_utc - epoch).total_seconds()) / 3600.0
 
 
-def _proxy_risk_label(
+def _risk_label(
     min_distance_km: float,
     relative_velocity_km_s: float,
-    time_to_tca_min: float,
-    severe_distance_km: float,
     label_distance_km: float,
     label_relative_velocity_km_s: float,
-    label_tca_minutes: float,
 ) -> int:
-    if min_distance_km <= severe_distance_km:
-        return 1
+    """Physics-based ground-truth label for a conjunction event.
+
+    A pair is labelled "risky" (1) when BOTH conditions hold:
+      * the minimum approach distance is inside the physical screening
+        radius (``label_distance_km``), and
+      * the relative velocity at TCA is high enough that a hypothetical
+        impact would be energetic (``label_relative_velocity_km_s``).
+
+    This label deliberately couples geometry (distance) with kinematics
+    (relative velocity). A classical fixed-distance threshold only sees
+    distance, so it necessarily misclassifies:
+      * slow, close passes  -> fixed threshold raises a false alarm,
+      * fast, slightly-more-distant passes -> fixed threshold misses them.
+
+    Because the label is NOT derived from ``risk_score`` (which is kept
+    out of the model feature set), there is no target leakage: a learner
+    must actually recover the distance/velocity decision boundary rather
+    than echo a pre-computed score.
+    """
     return int(
         min_distance_km <= label_distance_km
         and relative_velocity_km_s >= label_relative_velocity_km_s
-        and time_to_tca_min <= label_tca_minutes
     )
 
 
@@ -112,14 +126,34 @@ def simulate_pairs(
     leo_max_altitude_km: float,
     fixed_threshold_km: float,
     label_threshold_km: float,
-    severe_distance_km: float = 1000.0,
-    label_relative_velocity_km_s: float = 7.0,
-    label_tca_minutes: float = 720.0,
+    label_relative_velocity_km_s: float = 10.0,
+    max_tle_age_hours: float = 336.0,
 ) -> list[PairResult]:
+    """Propagate every LEO pair and score its closest approach.
+
+    ``max_tle_age_hours`` (default 14 days) only controls a data-quality
+    warning: SGP4 accuracy degrades quickly, so stale TLEs make the TCA
+    and minimum-distance figures physically unreliable. The simulation
+    still runs, but a warning is emitted so results are not over-trusted.
+    """
     ts = load.timescale()
     start_utc = start_utc.astimezone(timezone.utc).replace(microsecond=0)
     offsets = list(range(0, horizon_minutes + 1, step_minutes))
     results: list[PairResult] = []
+
+    stale = [
+        f"{sat.name} ({_tle_age_hours(sat, start_utc) / 24.0:.1f} d)"
+        for sat in satellites
+        if _tle_age_hours(sat, start_utc) > max_tle_age_hours
+    ]
+    if stale:
+        warnings.warn(
+            "TLE epoch older than "
+            f"{max_tle_age_hours / 24.0:.0f} days for: {', '.join(stale)}. "
+            "SGP4 propagation error grows with age; treat TCA and minimum "
+            "distance as illustrative, not operational.",
+            stacklevel=2,
+        )
 
     for sat1, sat2 in combinations(satellites, 2):
         start_t = _to_skyfield_time(ts, start_utc)
@@ -150,16 +184,16 @@ def simulate_pairs(
         v2 = sat2.at(tca_t).velocity.km_per_s
         relative_velocity = _distance_km(v1, v2)
         altitude_difference = abs(alt1 - alt2)
+        # risk_score is a human-readable ranking aid only. It is written to
+        # the CSV for triage but is deliberately EXCLUDED from the ML feature
+        # set (see space_debris.ml.FEATURES) to avoid target leakage.
         urgency = 1.0 + ((horizon_minutes - best_offset) / max(horizon_minutes, 1))
         risk_score = (relative_velocity / max(best_distance, 1.0)) * urgency
-        risk_label = _proxy_risk_label(
+        risk_label = _risk_label(
             min_distance_km=best_distance,
             relative_velocity_km_s=relative_velocity,
-            time_to_tca_min=float(best_offset),
-            severe_distance_km=severe_distance_km,
             label_distance_km=label_threshold_km,
             label_relative_velocity_km_s=label_relative_velocity_km_s,
-            label_tca_minutes=label_tca_minutes,
         )
 
         results.append(

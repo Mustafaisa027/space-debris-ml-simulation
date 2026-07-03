@@ -25,12 +25,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--step-minutes", type=int, default=5)
     parser.add_argument("--leo-min-altitude-km", type=float, default=160.0)
     parser.add_argument("--leo-max-altitude-km", type=float, default=2000.0)
-    parser.add_argument("--candidate-threshold-km", type=float, default=10000.0)
-    parser.add_argument("--fixed-threshold-km", type=float, default=5000.0)
-    parser.add_argument("--label-threshold-km", type=float, default=3000.0)
-    parser.add_argument("--severe-distance-km", type=float, default=1000.0)
-    parser.add_argument("--label-relative-velocity-km-s", type=float, default=7.0)
-    parser.add_argument("--label-tca-minutes", type=float, default=720.0)
+    parser.add_argument("--candidate-threshold-km", type=float, default=50.0)
+    parser.add_argument("--fixed-threshold-km", type=float, default=25.0)
+    parser.add_argument("--label-threshold-km", type=float, default=20.0)
+    parser.add_argument("--label-relative-velocity-km-s", type=float, default=10.0)
+    parser.add_argument("--max-tle-age-hours", type=float, default=336.0)
     return parser.parse_args()
 
 
@@ -74,9 +73,8 @@ def collect_once(args: argparse.Namespace) -> int:
         leo_max_altitude_km=args.leo_max_altitude_km,
         fixed_threshold_km=args.fixed_threshold_km,
         label_threshold_km=args.label_threshold_km,
-        severe_distance_km=args.severe_distance_km,
         label_relative_velocity_km_s=args.label_relative_velocity_km_s,
-        label_tca_minutes=args.label_tca_minutes,
+        max_tle_age_hours=args.max_tle_age_hours,
     )
     conjunctions = filter_conjunctions(rows, args.candidate_threshold_km)
 

@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "space-debris-ml-simulation"
+version = "0.2.0"
+description = "Open-source LEO conjunction analysis and ML risk-classification framework (IAC 2026, Paper 114764)"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "skyfield>=1.54",
+    "numpy>=2.0",
+    "pandas>=2.0",
+    "scikit-learn>=1.4",
+    "matplotlib>=3.8",
+    "xgboost>=2.0",
+    "sgp4>=2.20",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["space_debris*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

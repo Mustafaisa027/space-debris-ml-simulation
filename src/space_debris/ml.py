@@ -12,6 +12,13 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
 
 
+# NOTE: ``risk_score`` and the raw label-defining columns are intentionally
+# absent. The ground-truth label (risk_label) is a function of min_distance_km
+# and relative_velocity_km_s, so a learner is given those physical predictors
+# and must recover the decision boundary itself. ``risk_score`` is excluded
+# because it is a monotone transform of the same quantities and would leak the
+# target. This is what lets the ML models be compared fairly against the
+# fixed-distance baseline.
 FEATURES = [
     "time_to_tca_min",
     "current_distance_km",
@@ -19,7 +26,6 @@ FEATURES = [
     "relative_velocity_km_s",
     "altitude_difference_km",
     "max_tle_age_hours",
-    "risk_score",
 ]
 
 
@@ -73,6 +79,11 @@ def compare_models(dataset_path: Path, report_path: Path, time_column: str | Non
 
     x_train, x_test, y_train, y_test, split_name = _split_data(df, time_column)
 
+    # A learner needs both classes in the training split. With rare conjunction
+    # events and a time-ordered split this is not guaranteed, so we report the
+    # situation instead of letting scikit-learn raise.
+    trainable = y_train.nunique() >= 2
+
     models = {
         "fixed_threshold": None,
         "logistic_regression": make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000)),
@@ -89,8 +100,23 @@ def compare_models(dataset_path: Path, report_path: Path, time_column: str | Non
 
     rows = []
     for name, model in models.items():
+        note = ""
         if name == "fixed_threshold":
+            # Purely distance-based baseline: no training required.
             pred = df.loc[x_test.index, "fixed_threshold_alarm"].astype(int)
+        elif not trainable:
+            rows.append(
+                {
+                    "model": name,
+                    "precision": None, "recall": None, "f1": None, "accuracy": None,
+                    "false_positive": None, "false_negative": None,
+                    "true_positive": None, "true_negative": None,
+                    "train_rows": int(len(y_train)), "test_rows": int(len(y_test)),
+                    "split": split_name,
+                    "note": "Training split had a single class; model skipped.",
+                }
+            )
+            continue
         else:
             model.fit(x_train, y_train)
             pred = model.predict(x_test)
