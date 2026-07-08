@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import time
 from http.client import HTTPResponse
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,6 +18,38 @@ DEFAULT_OBJECTS = {
     "27424": "AQUA",
 }
 
+# CelesTrak's GROUP endpoint (e.g. GROUP=STARLINK) has been observed to return
+# HTTP 403 even for small requests, while the per-object CATNR endpoint stays
+# reachable. LEO_MIXED_CATALOG is a curated fallback: long-lived, publicly
+# documented objects spanning distinct LEO inclinations (ISS-like ~51.6 deg,
+# sun-synchronous polar ~98-99 deg, low-inclination ~28.5 deg) so their orbital
+# planes actually cross, unlike a single constellation whose satellites share
+# near-identical planes and altitudes. Verify/refresh against CelesTrak before
+# a final scientific run.
+LEO_MIXED_CATALOG: dict[str, str] = {
+    "25544": "ISS (ZARYA)",          # ~51.6 deg
+    "25338": "NOAA 15",              # ~98.7 deg, sun-synchronous
+    "28654": "NOAA 18",              # ~99.0 deg, sun-synchronous
+    "33591": "NOAA 19",              # ~99.0 deg, sun-synchronous
+    "25994": "TERRA",                # ~98.2 deg, sun-synchronous
+    "27424": "AQUA",                 # ~98.2 deg, sun-synchronous
+    "20580": "HUBBLE SPACE TELESCOPE",  # ~28.5 deg
+}
+
+# Name lookup used when labelling any fetched TLE block.
+KNOWN_OBJECT_NAMES: dict[str, str] = {**DEFAULT_OBJECTS, **LEO_MIXED_CATALOG}
+
+PRESETS: dict[str, dict[str, str]] = {
+    "leo_mixed": LEO_MIXED_CATALOG,
+}
+
+# Curated CATNR catalog to fall back to when a given GROUP query is blocked.
+GROUP_FALLBACK_CATALOGS: dict[str, dict[str, str]] = {
+    "STARLINK": LEO_MIXED_CATALOG,
+}
+
+RETRYABLE_STATUS_CODES = {403, 429}
+
 
 class CelesTrakHTTPError(RuntimeError):
     def __init__(self, status_code: int, reason: str):
@@ -28,6 +61,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Fetch current 3-line TLEs from CelesTrak")
     parser.add_argument("--catnr", nargs="*", default=list(DEFAULT_OBJECTS), help="NORAD catalog numbers")
     parser.add_argument("--group", nargs="*", default=[], help="CelesTrak GP groups, e.g. STATIONS WEATHER ACTIVE")
+    parser.add_argument(
+        "--preset",
+        choices=sorted(PRESETS),
+        default=None,
+        help="use a curated multi-orbit CATNR catalog instead of --catnr/--group",
+    )
     parser.add_argument("--max-objects", type=int, default=None, help="limit objects written to the output file")
     parser.add_argument("--output", default=None, help="output TLE file")
     return parser.parse_args()
@@ -50,6 +89,28 @@ def fetch_gp(query: str, value: str) -> str:
     return text
 
 
+def fetch_gp_with_retry(query: str, value: str, retries: int = 3, base_delay: float = 1.5) -> str:
+    """Call fetch_gp, retrying with exponential backoff on 403/429 responses.
+
+    Non-retryable errors (e.g. a genuinely invalid CATNR) propagate immediately.
+    """
+    last_error: CelesTrakHTTPError | None = None
+    for attempt in range(1, retries + 1):
+        try:
+            return fetch_gp(query, value)
+        except CelesTrakHTTPError as exc:
+            if exc.status_code not in RETRYABLE_STATUS_CODES:
+                raise
+            last_error = exc
+            if attempt < retries:
+                time.sleep(base_delay * (2 ** (attempt - 1)))
+    assert last_error is not None
+    raise CelesTrakHTTPError(
+        last_error.status_code,
+        f"{last_error} (gave up after {retries} attempts for {query}={value})",
+    )
+
+
 def normalize_tle_blocks(text: str, fallback_name: str | None = None) -> list[str]:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     blocks: list[str] = []
@@ -67,20 +128,76 @@ def normalize_tle_blocks(text: str, fallback_name: str | None = None) -> list[st
     return blocks
 
 
-def fetch_tle(catnr: str) -> str:
-    text = fetch_gp("CATNR", catnr)
-    blocks = normalize_tle_blocks(text, DEFAULT_OBJECTS.get(catnr, f"CATNR {catnr}"))
+def fetch_tle(catnr: str, retries: int = 3) -> str:
+    text = fetch_gp_with_retry("CATNR", catnr, retries=retries)
+    blocks = normalize_tle_blocks(text, KNOWN_OBJECT_NAMES.get(catnr, f"CATNR {catnr}"))
     if len(blocks) != 1:
         raise ValueError(f"Expected one TLE for CATNR={catnr}, got {len(blocks)}")
     return blocks[0]
 
 
-def fetch_tle_blocks(catnrs: list[str], groups: list[str], max_objects: int | None = None) -> list[str]:
+def fetch_catnr_blocks(catnrs: list[str], request_delay: float = 1.5) -> tuple[list[str], list[str]]:
+    """Fetch each catalog number individually, tolerating per-object failures.
+
+    Returns (blocks, failed_catnrs) so callers keep whatever partial result was
+    obtained instead of losing an entire batch to one bad object.
+    """
     blocks: list[str] = []
-    for catnr in catnrs:
-        blocks.append(fetch_tle(catnr))
+    failures: list[str] = []
+    for i, catnr in enumerate(catnrs):
+        if i > 0:
+            time.sleep(request_delay)
+        try:
+            blocks.append(fetch_tle(catnr))
+        except (CelesTrakHTTPError, ValueError) as exc:
+            failures.append(catnr)
+            print(f"WARN: failed to fetch CATNR={catnr}: {exc}")
+    return blocks, failures
+
+
+def fetch_group_blocks(group: str, request_delay: float = 1.5) -> tuple[list[str], list[str]]:
+    """Fetch a CelesTrak GROUP, falling back to a curated CATNR catalog when the
+    GROUP endpoint itself is blocked (403/429), e.g. GROUP_FALLBACK_CATALOGS.
+    """
+    try:
+        text = fetch_gp_with_retry("GROUP", group)
+        return normalize_tle_blocks(text), []
+    except CelesTrakHTTPError as exc:
+        if exc.status_code not in RETRYABLE_STATUS_CODES:
+            raise
+        fallback_catalog = GROUP_FALLBACK_CATALOGS.get(group.upper())
+        if not fallback_catalog:
+            raise CelesTrakHTTPError(
+                exc.status_code,
+                f"{exc}; no CATNR fallback catalog registered for GROUP={group}",
+            ) from exc
+        print(
+            f"WARN: GROUP={group} returned HTTP {exc.status_code}; "
+            f"falling back to {len(fallback_catalog)} curated CATNR objects."
+        )
+        return fetch_catnr_blocks(list(fallback_catalog), request_delay=request_delay)
+
+
+def fetch_tle_blocks(
+    catnrs: list[str],
+    groups: list[str],
+    max_objects: int | None = None,
+    request_delay: float = 1.5,
+) -> list[str]:
+    blocks: list[str] = []
+    failures: list[str] = []
+
+    catnr_blocks, catnr_failures = fetch_catnr_blocks(catnrs, request_delay=request_delay)
+    blocks.extend(catnr_blocks)
+    failures.extend(catnr_failures)
+
     for group in groups:
-        blocks.extend(normalize_tle_blocks(fetch_gp("GROUP", group)))
+        group_blocks, group_failures = fetch_group_blocks(group, request_delay=request_delay)
+        blocks.extend(group_blocks)
+        failures.extend(group_failures)
+
+    if failures:
+        print(f"WARN: {len(failures)} object(s) could not be fetched: {failures}")
 
     seen: set[str] = set()
     unique_blocks: list[str] = []
@@ -103,8 +220,14 @@ def write_tle_file(output: Path, blocks: list[str]) -> None:
     output.write_text("\n".join(blocks) + "\n", encoding="utf-8")
 
 
-def fetch_to_file(output: Path, catnrs: list[str], groups: list[str], max_objects: int | None = None) -> Path:
-    blocks = fetch_tle_blocks(catnrs, groups, max_objects)
+def fetch_to_file(
+    output: Path,
+    catnrs: list[str],
+    groups: list[str],
+    max_objects: int | None = None,
+    request_delay: float = 1.5,
+) -> Path:
+    blocks = fetch_tle_blocks(catnrs, groups, max_objects, request_delay=request_delay)
     write_tle_file(output, blocks)
     return output
 
@@ -112,10 +235,20 @@ def fetch_to_file(output: Path, catnrs: list[str], groups: list[str], max_object
 def main() -> None:
     args = parse_args()
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    output = Path(args.output or f"data/live_tles_{timestamp}.txt")
+
+    if args.preset:
+        catnrs = list(PRESETS[args.preset])
+        groups: list[str] = []
+        default_output = f"data/catalog_{args.preset}.txt"
+    else:
+        catnrs = args.catnr
+        groups = args.group
+        default_output = f"data/live_tles_{timestamp}.txt"
+
+    output = Path(args.output or default_output)
     output.parent.mkdir(parents=True, exist_ok=True)
 
-    fetch_to_file(output, args.catnr, args.group, args.max_objects)
+    fetch_to_file(output, catnrs, groups, args.max_objects)
     print(f"OK -> {output}")
 
 
