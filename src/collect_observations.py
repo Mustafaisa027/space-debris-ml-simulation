@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fetch_tles import CelesTrakHTTPError, DEFAULT_OBJECTS, fetch_to_file
+from fetch_tles import PRESETS, fetch_to_file
 from space_debris.core import build_satellites, filter_conjunctions, read_tles, simulate_pairs, write_pair_results
 
 
@@ -15,8 +16,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--days", type=float, default=60.0, help="collection duration")
     parser.add_argument("--interval-hours", type=float, default=2.0, help="CelesTrak recommends not polling more often")
     parser.add_argument("--once", action="store_true", help="run one fetch/simulate cycle and exit")
-    parser.add_argument("--catnr", nargs="*", default=list(DEFAULT_OBJECTS), help="NORAD catalog numbers")
-    parser.add_argument("--group", nargs="*", default=[], help="CelesTrak groups, e.g. STATIONS WEATHER")
+    parser.add_argument("--catnr", nargs="*", default=None, help="NORAD catalog numbers (overrides --preset)")
+    parser.add_argument("--group", nargs="*", default=None, help="CelesTrak groups, e.g. STATIONS WEATHER (overrides --preset)")
+    parser.add_argument(
+        "--preset",
+        choices=sorted(PRESETS),
+        default="leo_mixed",
+        help="curated multi-orbit CATNR catalog used when --catnr/--group are not given",
+    )
     parser.add_argument("--max-objects", type=int, default=75, help="cap objects to control O(n^2) pair growth")
     parser.add_argument("--snapshot-dir", default="data/tle_snapshots")
     parser.add_argument("--run-root", default="outputs/runs")
@@ -35,6 +42,24 @@ def parse_args() -> argparse.Namespace:
 
 def utc_stamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+
+
+def resolve_source(args: argparse.Namespace) -> tuple[list[str], list[str], str]:
+    """Return (catnrs, groups, source_label) for a collection cycle.
+
+    Explicit --catnr/--group override the default. Otherwise the curated
+    --preset catalog (leo_mixed by default) is used, since a single
+    constellation's near-identical orbital planes rarely produce genuine
+    close approaches (see ROADMAP_YOL1.md observations G3-G4).
+    """
+    if args.catnr or args.group:
+        return args.catnr or [], args.group or [], "explicit"
+    return list(PRESETS[args.preset]), [], f"preset:{args.preset}"
+
+
+def write_provenance(path: Path, provenance: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(provenance, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def append_csv(target: Path, source: Path, extra: dict[str, str]) -> int:
@@ -61,8 +86,20 @@ def collect_once(args: argparse.Namespace) -> int:
     run_dir = Path(args.run_root) / stamp
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    fetch_to_file(snapshot_path, args.catnr, args.group, args.max_objects)
+    catnrs, groups, source = resolve_source(args)
+    fetch_to_file(snapshot_path, catnrs, groups, args.max_objects)
     objects = read_tles(snapshot_path)
+
+    provenance = {
+        "collection_id": stamp,
+        "source": source,
+        "preset": args.preset if source.startswith("preset:") else "",
+        "fetched_utc": snapshot_utc.isoformat().replace("+00:00", "Z"),
+        "object_count": len(objects),
+        "tle_file": str(snapshot_path),
+    }
+    write_provenance(snapshot_path.with_suffix(".json"), provenance)
+
     satellites = build_satellites(objects)
     rows = simulate_pairs(
         satellites=satellites,
@@ -88,6 +125,9 @@ def collect_once(args: argparse.Namespace) -> int:
         dataset_path,
         {
             "collection_id": stamp,
+            "source": provenance["source"],
+            "preset": provenance["preset"],
+            "fetched_utc": provenance["fetched_utc"],
             "tle_file": str(snapshot_path),
             "object_count": str(len(objects)),
         },
@@ -107,13 +147,11 @@ def main() -> None:
     while True:
         try:
             collect_once(args)
-        except CelesTrakHTTPError as exc:
-            print(f"collector fatal: {exc}")
-            if exc.status_code in {403, 404}:
-                print("Stopping to avoid repeated blocked or invalid CelesTrak requests.")
-                break
         except Exception as exc:
-            print(f"collector error: {exc}")
+            # A single bad cycle (fetch failure, transient CelesTrak block,
+            # etc.) must not take down a 60-day scheduled task: log it and
+            # pick back up on the next interval instead of crashing.
+            print(f"{utc_stamp()}: collector error (continuing next cycle): {exc}")
         if args.once or time.time() >= deadline:
             break
         time.sleep(interval_seconds)
