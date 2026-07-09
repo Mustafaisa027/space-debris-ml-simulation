@@ -20,20 +20,65 @@ DEFAULT_OBJECTS = {
 
 # CelesTrak's GROUP endpoint (e.g. GROUP=STARLINK) has been observed to return
 # HTTP 403 even for small requests, while the per-object CATNR endpoint stays
-# reachable. LEO_MIXED_CATALOG is a curated fallback: long-lived, publicly
-# documented objects spanning distinct LEO inclinations (ISS-like ~51.6 deg,
-# sun-synchronous polar ~98-99 deg, low-inclination ~28.5 deg) so their orbital
-# planes actually cross, unlike a single constellation whose satellites share
-# near-identical planes and altitudes. Verify/refresh against CelesTrak before
-# a final scientific run.
+# reachable. LEO_MIXED_CATALOG is a curated fallback: 50 long-lived, publicly
+# documented objects spanning inclinations from ~28 deg to ~98 deg (sun-
+# synchronous weather/earth-observation satellites, ISS/CSS/crew and cargo
+# traffic, ocean-altimetry and polar-orbiting science missions, and the
+# Iridium 33 debris field from the 2009 Iridium 33 / Kosmos 2251 collision)
+# so their orbital planes actually cross, unlike a single constellation whose
+# satellites share near-identical planes and altitudes. Verify/refresh against
+# CelesTrak before a final scientific run.
 LEO_MIXED_CATALOG: dict[str, str] = {
+    "25338": "NOAA 15",              # ~98.5 deg, sun-synchronous
+    "43013": "NOAA 20",              # ~98.7 deg, sun-synchronous
+    "54234": "NOAA 21",              # ~98.7 deg, sun-synchronous
+    "25994": "TERRA",                # ~98.0 deg, sun-synchronous
+    "27424": "AQUA",                 # ~98.4 deg, sun-synchronous
+    "28376": "AURA",                 # ~98.3 deg, sun-synchronous
+    "39084": "LANDSAT 8",            # ~98.2 deg, sun-synchronous
+    "49260": "LANDSAT 9",            # ~98.2 deg, sun-synchronous
+    "39634": "SENTINEL-1A",          # ~98.2 deg, sun-synchronous
+    "40697": "SENTINEL-2A",          # ~98.6 deg, sun-synchronous
+    "41335": "SENTINEL-3A",          # ~98.6 deg, sun-synchronous
+    "42969": "SENTINEL-5P",          # ~98.8 deg, sun-synchronous
     "25544": "ISS (ZARYA)",          # ~51.6 deg
-    "25338": "NOAA 15",              # ~98.7 deg, sun-synchronous
-    "28654": "NOAA 18",              # ~99.0 deg, sun-synchronous
-    "33591": "NOAA 19",              # ~99.0 deg, sun-synchronous
-    "25994": "TERRA",                # ~98.2 deg, sun-synchronous
-    "27424": "AQUA",                 # ~98.2 deg, sun-synchronous
+    "36086": "POISK",                # ~51.6 deg, ISS module
+    "49044": "ISS (NAUKA)",          # ~51.6 deg, ISS module
+    "67796": "CREW DRAGON 12",       # ~51.6 deg, ISS traffic
+    "68319": "PROGRESS-MS 33",       # ~51.6 deg, ISS traffic
+    "68689": "CYGNUS NG-24",         # ~51.6 deg, ISS traffic
+    "48274": "CSS (TIANHE)",         # ~41.5 deg, Chinese Space Station
+    "53239": "CSS (WENTIAN)",        # ~41.5 deg, Chinese Space Station
+    "54216": "CSS (MENGTIAN)",       # ~41.5 deg, Chinese Space Station
     "20580": "HUBBLE SPACE TELESCOPE",  # ~28.5 deg
+    "41884": "CYGFM05",              # ~35.0 deg, CYGNSS
+    "41885": "CYGFM04",              # ~34.9 deg, CYGNSS
+    "41886": "CYGFM02",              # ~34.9 deg, CYGNSS
+    "60452": "LEGION 3",             # ~45.0 deg
+    "41240": "JASON-3",              # ~66.0 deg, ocean altimetry
+    "46984": "SENTINEL-6A",          # ~66.0 deg, ocean altimetry
+    "54754": "SWOT",                 # ~77.6 deg, ocean altimetry
+    "39451": "SWARM B",              # ~87.7 deg, polar
+    "39452": "SWARM A",              # ~87.3 deg, polar
+    "26998": "TIMED",                # ~74.1 deg
+    "36508": "CRYOSAT 2",            # ~92.0 deg, polar
+    "29228": "RESURS-DK 1",          # ~70.0 deg
+    "24946": "IRIDIUM 33",           # ~86.4 deg (destroyed 2009-02-10)
+    "33773": "IRIDIUM 33 DEB",       # ~86.4 deg, Iridium 33 collision debris
+    "33775": "IRIDIUM 33 DEB",       # ~86.4 deg, Iridium 33 collision debris
+    "33776": "IRIDIUM 33 DEB",       # ~86.4 deg, Iridium 33 collision debris
+    "33777": "IRIDIUM 33 DEB",       # ~86.4 deg, Iridium 33 collision debris
+    "33850": "IRIDIUM 33 DEB",       # ~86.3 deg, Iridium 33 collision debris
+    "33860": "IRIDIUM 33 DEB",       # ~86.4 deg, Iridium 33 collision debris
+    "33862": "IRIDIUM 33 DEB",       # ~86.4 deg, Iridium 33 collision debris
+    "33866": "IRIDIUM 33 DEB",       # ~86.3 deg, Iridium 33 collision debris
+    "33953": "IRIDIUM 33 DEB",       # ~86.4 deg, Iridium 33 collision debris
+    "33960": "IRIDIUM 33 DEB",       # ~86.3 deg, Iridium 33 collision debris
+    "34071": "IRIDIUM 33 DEB",       # ~86.3 deg, Iridium 33 collision debris
+    "34077": "IRIDIUM 33 DEB",       # ~86.4 deg, Iridium 33 collision debris
+    "34079": "IRIDIUM 33 DEB",       # ~86.4 deg, Iridium 33 collision debris
+    "34088": "IRIDIUM 33 DEB",       # ~86.4 deg, Iridium 33 collision debris
+    "34521": "IRIDIUM 33 DEB",       # ~86.4 deg, Iridium 33 collision debris
 }
 
 # Name lookup used when labelling any fetched TLE block.
