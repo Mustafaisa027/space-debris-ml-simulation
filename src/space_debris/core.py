@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import io
 import math
 import warnings
 from dataclasses import dataclass
@@ -11,6 +12,8 @@ from typing import Iterable
 
 import numpy as np
 from skyfield.api import EarthSatellite, load
+
+from space_debris.provenance import write_csv_text_with_provenance
 
 EARTH_RADIUS_KM = 6378.137
 
@@ -336,41 +339,48 @@ def simulate_pairs(
     return sorted(results, key=lambda row: row.risk_score, reverse=True)
 
 
-def write_pair_results(path: Path, rows: list[PairResult]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+def write_pair_results(
+    path: Path,
+    rows: list[PairResult],
+    *,
+    source: str = "",
+    config_summary: str = "",
+) -> None:
     fieldnames = list(PairResult.__dataclass_fields__.keys())
-    with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
-        writer.writeheader()
-        for row in rows:
-            writer.writerow(
-                {
-                    "object_1": row.object_1,
-                    "object_2": row.object_2,
-                    "snapshot_utc": row.snapshot_utc,
-                    "tle_epoch_1_utc": row.tle_epoch_1_utc,
-                    "tle_epoch_2_utc": row.tle_epoch_2_utc,
-                    "max_tle_age_hours": f"{row.max_tle_age_hours:.3f}",
-                    "tca_utc": row.tca_utc,
-                    "time_to_tca_min": f"{row.time_to_tca_min:.0f}",
-                    "current_distance_km": f"{row.current_distance_km:.3f}",
-                    "min_distance_km": f"{row.min_distance_km:.3f}",
-                    "relative_velocity_km_s": f"{row.relative_velocity_km_s:.6f}",
-                    "altitude_1_km": f"{row.altitude_1_km:.3f}",
-                    "altitude_2_km": f"{row.altitude_2_km:.3f}",
-                    "altitude_difference_km": f"{row.altitude_difference_km:.3f}",
-                    "relative_radial_km": f"{row.relative_radial_km:.3f}",
-                    "relative_intrack_km": f"{row.relative_intrack_km:.3f}",
-                    "relative_crosstrack_km": f"{row.relative_crosstrack_km:.3f}",
-                    "relative_inclination_deg": f"{row.relative_inclination_deg:.3f}",
-                    "radial_velocity_km_s": f"{row.radial_velocity_km_s:.6f}",
-                    "tangential_velocity_km_s": f"{row.tangential_velocity_km_s:.6f}",
-                    "approach_angle_deg": f"{row.approach_angle_deg:.3f}",
-                    "risk_score": f"{row.risk_score:.10f}",
-                    "fixed_threshold_alarm": row.fixed_threshold_alarm,
-                    "risk_label": row.risk_label,
-                }
-            )
+    buffer = io.StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=fieldnames)
+    writer.writeheader()
+    for row in rows:
+        writer.writerow(
+            {
+                "object_1": row.object_1,
+                "object_2": row.object_2,
+                "snapshot_utc": row.snapshot_utc,
+                "tle_epoch_1_utc": row.tle_epoch_1_utc,
+                "tle_epoch_2_utc": row.tle_epoch_2_utc,
+                "max_tle_age_hours": f"{row.max_tle_age_hours:.3f}",
+                "tca_utc": row.tca_utc,
+                "time_to_tca_min": f"{row.time_to_tca_min:.0f}",
+                "current_distance_km": f"{row.current_distance_km:.3f}",
+                "min_distance_km": f"{row.min_distance_km:.3f}",
+                "relative_velocity_km_s": f"{row.relative_velocity_km_s:.6f}",
+                "altitude_1_km": f"{row.altitude_1_km:.3f}",
+                "altitude_2_km": f"{row.altitude_2_km:.3f}",
+                "altitude_difference_km": f"{row.altitude_difference_km:.3f}",
+                "relative_radial_km": f"{row.relative_radial_km:.3f}",
+                "relative_intrack_km": f"{row.relative_intrack_km:.3f}",
+                "relative_crosstrack_km": f"{row.relative_crosstrack_km:.3f}",
+                "relative_inclination_deg": f"{row.relative_inclination_deg:.3f}",
+                "radial_velocity_km_s": f"{row.radial_velocity_km_s:.6f}",
+                "tangential_velocity_km_s": f"{row.tangential_velocity_km_s:.6f}",
+                "approach_angle_deg": f"{row.approach_angle_deg:.3f}",
+                "risk_score": f"{row.risk_score:.10f}",
+                "fixed_threshold_alarm": row.fixed_threshold_alarm,
+                "risk_label": row.risk_label,
+            }
+        )
+
+    write_csv_text_with_provenance(path, buffer.getvalue(), source=source, config_summary=config_summary)
 
 
 def filter_conjunctions(rows: list[PairResult], candidate_threshold_km: float) -> list[PairResult]:

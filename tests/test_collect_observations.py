@@ -130,8 +130,37 @@ def test_collect_once_writes_provenance_sidecar(monkeypatch, tmp_path):
     assert provenance["preset"] == "leo_mixed"
     assert provenance["object_count"] == 6
     assert "fetched_utc" in provenance and provenance["fetched_utc"].endswith("Z")
+    assert "git_commit" in provenance
 
     history_path = tmp_path / "history" / "conjunction_observations.csv"
     assert history_path.exists()
     header = history_path.read_text(encoding="utf-8").splitlines()[0]
     assert "source" in header and "preset" in header and "fetched_utc" in header
+    # write_pair_results() embeds a '#' provenance header in dataset_path
+    # (ROADMAP_YOL1.md GOREV 6); append_csv must not have leaked a literal
+    # '#' comment line into the accumulated history CSV.
+    assert not header.startswith("#")
+
+
+def test_append_csv_skips_provenance_header_lines_in_source(tmp_path):
+    source_path = tmp_path / "conjunction_dataset.csv"
+    source_path.write_text(
+        "# generated_utc: 2026-07-09T00:00:00Z\n"
+        "# git_commit: abc1234\n"
+        "# source: leo_mixed preset\n"
+        "# config: horizon=720min\n"
+        "object_1,object_2,min_distance_km\n"
+        "SAT-A,SAT-B,12.5\n"
+        "SAT-C,SAT-D,88.0\n",
+        encoding="utf-8",
+    )
+    target_path = tmp_path / "history.csv"
+
+    count = collect_observations.append_csv(target_path, source_path, {"collection_id": "run1"})
+
+    assert count == 2
+    lines = target_path.read_text(encoding="utf-8").splitlines()
+    assert lines[0] == "collection_id,object_1,object_2,min_distance_km"
+    assert not any(line.startswith("#") for line in lines)
+    assert lines[1] == "run1,SAT-A,SAT-B,12.5"
+    assert lines[2] == "run1,SAT-C,SAT-D,88.0"

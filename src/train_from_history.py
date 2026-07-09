@@ -4,7 +4,7 @@ import argparse
 from pathlib import Path
 
 from space_debris.ml import compare_models, compare_to_baseline_pr_auc, time_series_cv_report
-from space_debris.plots import plot_model_metrics
+from space_debris.plots import create_publication_plots, plot_model_metrics
 
 
 def parse_args() -> argparse.Namespace:
@@ -22,7 +22,12 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    report = compare_models(Path(args.history), Path(args.report), time_column="snapshot_utc")
+    source = f"history={args.history}"
+    config_summary = "time_column=snapshot_utc"
+    report = compare_models(
+        Path(args.history), Path(args.report), time_column="snapshot_utc",
+        source=source, config_summary=config_summary,
+    )
     plot_model_metrics(Path(args.report), Path(args.report).with_suffix(".png"))
     print(f"OK -> {args.report}")
     print(f"Plot -> {Path(args.report).with_suffix('.png')}")
@@ -30,10 +35,19 @@ def main() -> None:
     print()
     print(compare_to_baseline_pr_auc(report))
 
+    publication_plots = create_publication_plots(
+        dataset_path=Path(args.history),
+        output_dir=Path(args.report).parent,
+        time_column="snapshot_utc",
+    )
+    for plot_path in publication_plots:
+        print(f"Publication plot -> {plot_path}")
+
     if args.cv_splits:
         cv_report_path = Path(args.report).with_name(Path(args.report).stem + "_cv.csv")
         cv_report = time_series_cv_report(
-            Path(args.history), cv_report_path, n_splits=args.cv_splits, time_column="snapshot_utc"
+            Path(args.history), cv_report_path, n_splits=args.cv_splits, time_column="snapshot_utc",
+            source=source, config_summary=f"{config_summary}, n_splits={args.cv_splits}",
         )
         print()
         print(f"CV report ({args.cv_splits}-fold TimeSeriesSplit) -> {cv_report_path}")

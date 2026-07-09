@@ -22,6 +22,7 @@ from space_debris.ml import (
     _ranking_metrics,
     compare_models,
     compare_to_baseline_pr_auc,
+    model_predictions_for_plotting,
     time_series_cv_report,
 )
 
@@ -174,3 +175,67 @@ def test_features_still_excludes_leakage_columns():
     assert "risk_score" not in FEATURES
     assert "risk_label" not in FEATURES
     assert "fixed_threshold_alarm" not in FEATURES
+
+
+def test_compare_models_embeds_provenance_header_and_stays_readable(tmp_path):
+    df = _synthetic_dataset(200, seed=5)
+    dataset_path = tmp_path / "dataset.csv"
+    df.to_csv(dataset_path, index=False)
+    report_path = tmp_path / "report.csv"
+
+    report = compare_models(
+        dataset_path, report_path, source="unit-test", config_summary="n=200"
+    )
+
+    raw_lines = report_path.read_text(encoding="utf-8").splitlines()
+    assert raw_lines[0].startswith("# generated_utc:")
+    assert any("unit-test" in line for line in raw_lines)
+    assert any("n=200" in line for line in raw_lines)
+
+    # The in-memory report returned to callers is unaffected by the header.
+    assert list(report.columns) == REPORT_COLUMNS
+    round_tripped = pd.read_csv(report_path, comment="#")
+    # CSV round-tripping turns empty strings (e.g. an all-"" note column)
+    # into NaN, which changes dtype but not meaning -- normalize before
+    # comparing values.
+    pd.testing.assert_frame_equal(
+        round_tripped.fillna(""), report.fillna(""), check_dtype=False
+    )
+
+
+def test_compare_models_can_read_a_dataset_with_a_provenance_header(tmp_path):
+    # Regression test: core.write_pair_results() may prepend a '#' header to
+    # its own CSV output; compare_models() must still parse the dataset it
+    # produces.
+    from space_debris.provenance import write_csv_text_with_provenance
+
+    df = _synthetic_dataset(200, seed=6)
+    dataset_path = tmp_path / "dataset.csv"
+    write_csv_text_with_provenance(dataset_path, df.to_csv(index=False), source="x", config_summary="y")
+
+    report = compare_models(dataset_path, tmp_path / "report.csv")
+    assert report["pr_auc"].notna().all()
+
+
+def test_model_predictions_for_plotting_returns_expected_structure(tmp_path):
+    df = _synthetic_dataset(200, seed=7)
+    dataset_path = tmp_path / "dataset.csv"
+    df.to_csv(dataset_path, index=False)
+
+    predictions = model_predictions_for_plotting(dataset_path)
+
+    assert "fixed_threshold" in predictions
+    assert predictions["fixed_threshold"]["model"] is None
+    assert "random_forest" in predictions
+    rf = predictions["random_forest"]
+    assert rf["model"] is not None
+    assert hasattr(rf["model"], "feature_importances_")
+    assert len(rf["y_true"]) == len(rf["scores"]) == len(rf["pred"])
+
+
+def test_model_predictions_for_plotting_empty_on_insufficient_data(tmp_path):
+    df = _synthetic_dataset(4, seed=8)
+    dataset_path = tmp_path / "dataset.csv"
+    df.to_csv(dataset_path, index=False)
+
+    assert model_predictions_for_plotting(dataset_path) == {}

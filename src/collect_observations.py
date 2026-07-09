@@ -9,6 +9,7 @@ from pathlib import Path
 
 from fetch_tles import PRESETS, fetch_to_file
 from space_debris.core import build_satellites, filter_conjunctions, read_tles, simulate_pairs, write_pair_results
+from space_debris.provenance import git_commit_hash
 
 
 def parse_args() -> argparse.Namespace:
@@ -65,7 +66,11 @@ def write_provenance(path: Path, provenance: dict) -> None:
 def append_csv(target: Path, source: Path, extra: dict[str, str]) -> int:
     target.parent.mkdir(parents=True, exist_ok=True)
     with source.open(newline="", encoding="utf-8") as src:
-        reader = csv.DictReader(src)
+        # `source` may carry a '#'-prefixed provenance header (ROADMAP_YOL1.md
+        # GOREV 6, see space_debris.provenance) that csv.DictReader must not
+        # mistake for the fieldnames row.
+        non_comment_lines = (line for line in src if not line.startswith("#"))
+        reader = csv.DictReader(non_comment_lines)
         fieldnames = list(extra.keys()) + list(reader.fieldnames or [])
         write_header = not target.exists() or target.stat().st_size == 0
         count = 0
@@ -97,6 +102,7 @@ def collect_once(args: argparse.Namespace) -> int:
         "fetched_utc": snapshot_utc.isoformat().replace("+00:00", "Z"),
         "object_count": len(objects),
         "tle_file": str(snapshot_path),
+        "git_commit": git_commit_hash(),
     }
     write_provenance(snapshot_path.with_suffix(".json"), provenance)
 
@@ -115,10 +121,16 @@ def collect_once(args: argparse.Namespace) -> int:
     )
     conjunctions = filter_conjunctions(rows, args.candidate_threshold_km)
 
+    config_summary = (
+        f"horizon={args.horizon_minutes}min step={args.step_minutes}min "
+        f"label_threshold_km={args.label_threshold_km} "
+        f"label_relative_velocity_km_s={args.label_relative_velocity_km_s} "
+        f"candidate_threshold_km={args.candidate_threshold_km}"
+    )
     dataset_path = run_dir / "conjunction_dataset.csv"
     conjunction_path = run_dir / "identified_conjunctions.csv"
-    write_pair_results(dataset_path, rows)
-    write_pair_results(conjunction_path, conjunctions)
+    write_pair_results(dataset_path, rows, source=source, config_summary=config_summary)
+    write_pair_results(conjunction_path, conjunctions, source=source, config_summary=config_summary)
 
     count = append_csv(
         Path(args.history),

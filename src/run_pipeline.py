@@ -13,7 +13,8 @@ from space_debris.core import (
     write_pair_results,
 )
 from space_debris.ml import compare_models, compare_to_baseline_pr_auc
-from space_debris.plots import create_pipeline_plots, create_top_pair_physical_plots
+from space_debris.plots import create_pipeline_plots, create_publication_plots, create_top_pair_physical_plots
+from space_debris.provenance import png_provenance_metadata
 
 
 def parse_args() -> argparse.Namespace:
@@ -69,20 +70,34 @@ def main() -> None:
     top_pair_timeseries_path = output_dir / "top_pair_distance_timeseries.csv"
     top_pair_plot_path = output_dir / "top_pair_distance.png"
 
+    source = f"tle={args.tle}"
+    config_summary = (
+        f"horizon={args.horizon_minutes}min step={args.step_minutes}min "
+        f"label_threshold_km={args.label_threshold_km} "
+        f"label_relative_velocity_km_s={args.label_relative_velocity_km_s} "
+        f"candidate_threshold_km={args.candidate_threshold_km} "
+        f"fixed_threshold_km={args.fixed_threshold_km}"
+    )
+
     # ``dataset_path`` keeps every simulated pair for inspection, but — per the
     # paper — the classifier is trained on the *identified conjunctions* only.
     # This screening step is what makes the problem non-trivial: within the
     # candidate set, distance alone no longer separates risky from non-risky,
     # so a fixed-distance baseline starts making mistakes that the ML models
     # can avoid.
-    write_pair_results(dataset_path, rows)
-    write_pair_results(conjunction_path, conjunctions)
-    report = compare_models(conjunction_path, ml_report_path)
+    write_pair_results(dataset_path, rows, source=source, config_summary=config_summary)
+    write_pair_results(conjunction_path, conjunctions, source=source, config_summary=config_summary)
+    report = compare_models(conjunction_path, ml_report_path, source=source, config_summary=config_summary)
     scientific_plots = create_pipeline_plots(
         dataset_path=conjunction_path,
         model_report_path=ml_report_path,
         output_dir=output_dir,
         candidate_threshold_km=args.candidate_threshold_km,
+    )
+    publication_plots = create_publication_plots(
+        dataset_path=conjunction_path,
+        output_dir=output_dir,
+        current_threshold_km=args.fixed_threshold_km,
     )
 
     if rows:
@@ -122,7 +137,7 @@ def main() -> None:
             plt.grid(True)
             plt.legend()
             plt.tight_layout()
-            plt.savefig(top_pair_plot_path, dpi=160)
+            plt.savefig(top_pair_plot_path, dpi=160, metadata=png_provenance_metadata(source, config_summary))
             plt.close()
         except Exception as exc:
             print(f"Plot skipped: {exc}")
@@ -139,6 +154,8 @@ def main() -> None:
         print(f"Top pair plot           : {top_pair_plot_path}")
     for plot_path in scientific_plots:
         print(f"Scientific plot         : {plot_path}")
+    for plot_path in publication_plots:
+        print(f"Publication plot        : {plot_path}")
     if rows:
         for plot_path in physical_plots:
             print(f"Physical plot           : {plot_path}")

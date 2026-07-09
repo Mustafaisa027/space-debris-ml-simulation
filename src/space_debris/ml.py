@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
@@ -16,6 +17,8 @@ from sklearn.model_selection import TimeSeriesSplit, train_test_split
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
+
+from space_debris.provenance import write_csv_text_with_provenance
 
 
 # NOTE: ``risk_score`` and the raw label-defining columns are intentionally
@@ -241,6 +244,55 @@ def _evaluate_split(df: pd.DataFrame, x_train, x_test, y_train, y_test, split_na
     return rows
 
 
+def model_predictions_for_plotting(dataset_path: Path, time_column: str | None = None) -> dict:
+    """Per-model test-split predictions/scores/fitted estimator, for
+    PUBLICATION FIGURES ONLY (PR curves, confusion matrices, feature
+    importance in space_debris.plots) -- compare_models()/
+    time_series_cv_report() remain the source of truth for the numeric report.
+
+    Returns {model_name: {"y_true", "scores", "pred", "model"}}; empty dict if
+    there is not enough data to form a meaningful split (mirrors
+    compare_models()'s "not enough data" guard).
+    """
+    df = pd.read_csv(dataset_path, comment="#")
+    missing = [feature for feature in FEATURES + ["risk_label", "fixed_threshold_alarm"] if feature not in df.columns]
+    if missing:
+        raise ValueError(f"Dataset is missing required columns: {missing}")
+    if df.empty or df["risk_label"].nunique() < 2 or len(df) < 6:
+        return {}
+
+    x_train, x_test, y_train, y_test, _split_name = _split_data(df, time_column)
+    n_pos = int((y_train == 1).sum())
+    n_neg = int((y_train == 0).sum())
+    scale_pos_weight = (n_neg / n_pos) if n_pos > 0 else 1.0
+
+    models = _build_models(scale_pos_weight)
+    trainable = y_train.nunique() >= 2
+
+    predictions: dict = {}
+    for name, model in models.items():
+        if name == "fixed_threshold":
+            pred = df.loc[x_test.index, "fixed_threshold_alarm"].astype(int).to_numpy()
+            scores = pred
+            fitted_model = None
+        elif not trainable:
+            continue
+        else:
+            model.fit(x_train, y_train)
+            pred = np.asarray(model.predict(x_test))
+            scores = np.asarray(_ranking_score(model, x_test))
+            fitted_model = model
+
+        predictions[name] = {
+            "y_true": y_test.to_numpy(),
+            "scores": scores,
+            "pred": pred,
+            "model": fitted_model,
+        }
+
+    return predictions
+
+
 def compare_to_baseline_pr_auc(report: pd.DataFrame) -> str:
     """Human-readable PR-AUC comparison of each model against the classical
     fixed-distance baseline -- the paper's central question is whether ML
@@ -265,25 +317,36 @@ def compare_to_baseline_pr_auc(report: pd.DataFrame) -> str:
     return "\n".join(lines)
 
 
-def compare_models(dataset_path: Path, report_path: Path, time_column: str | None = None) -> pd.DataFrame:
-    df = pd.read_csv(dataset_path)
-    report_path.parent.mkdir(parents=True, exist_ok=True)
+def compare_models(
+    dataset_path: Path,
+    report_path: Path,
+    time_column: str | None = None,
+    *,
+    source: str = "",
+    config_summary: str = "",
+) -> pd.DataFrame:
+    df = pd.read_csv(dataset_path, comment="#")
     missing = [feature for feature in FEATURES + ["risk_label", "fixed_threshold_alarm"] if feature not in df.columns]
     if missing:
         raise ValueError(f"Dataset is missing required columns: {missing}")
+
+    if not source:
+        source = f"dataset={dataset_path}"
+    if not config_summary:
+        config_summary = f"time_column={time_column}"
 
     if df.empty or df["risk_label"].nunique() < 2 or len(df) < 6:
         report = pd.DataFrame(
             [_not_enough_data_row("not_enough_data", "Need at least 6 rows and two risk_label classes.")]
         )
-        report.to_csv(report_path, index=False)
+        write_csv_text_with_provenance(report_path, report.to_csv(index=False), source, config_summary)
         return report
 
     x_train, x_test, y_train, y_test, split_name = _split_data(df, time_column)
     rows = _evaluate_split(df, x_train, x_test, y_train, y_test, split_name)
 
     report = pd.DataFrame(rows)[REPORT_COLUMNS]
-    report.to_csv(report_path, index=False)
+    write_csv_text_with_provenance(report_path, report.to_csv(index=False), source, config_summary)
     return report
 
 
@@ -292,6 +355,9 @@ def time_series_cv_report(
     report_path: Path,
     n_splits: int = 5,
     time_column: str = "snapshot_utc",
+    *,
+    source: str = "",
+    config_summary: str = "",
 ) -> pd.DataFrame:
     """TimeSeriesSplit cross-validation, aggregated as mean +/- std per
     model/metric. This is an OPTION alongside (not a replacement for) the
@@ -299,13 +365,17 @@ def time_series_cv_report(
     noisy read of how stable each model's PR-AUC/ROC-AUC is across the
     accumulated history, at the cost of smaller/earlier training folds.
     """
-    df = pd.read_csv(dataset_path)
-    report_path.parent.mkdir(parents=True, exist_ok=True)
+    df = pd.read_csv(dataset_path, comment="#")
     missing = [feature for feature in FEATURES + ["risk_label", "fixed_threshold_alarm"] if feature not in df.columns]
     if missing:
         raise ValueError(f"Dataset is missing required columns: {missing}")
     if time_column not in df.columns:
         raise ValueError(f"time_column={time_column!r} not found in dataset")
+
+    if not source:
+        source = f"dataset={dataset_path}"
+    if not config_summary:
+        config_summary = f"time_column={time_column}, n_splits={n_splits}"
 
     ordered = df.sort_values(time_column).reset_index(drop=True)
 
@@ -322,7 +392,7 @@ def time_series_cv_report(
                 }
             ]
         )
-        report.to_csv(report_path, index=False)
+        write_csv_text_with_provenance(report_path, report.to_csv(index=False), source, config_summary)
         return report
 
     x = ordered[FEATURES]
@@ -355,5 +425,5 @@ def time_series_cv_report(
             )
 
     report = pd.DataFrame(agg_rows)
-    report.to_csv(report_path, index=False)
+    write_csv_text_with_provenance(report_path, report.to_csv(index=False), source, config_summary)
     return report

@@ -12,6 +12,7 @@ import pandas as pd
 import pytest
 
 from space_debris.core import (
+    PairResult,
     _altitude_km,
     _distance_km,
     _encounter_geometry_features,
@@ -19,6 +20,7 @@ from space_debris.core import (
     build_satellites,
     read_tles,
     simulate_pairs,
+    write_pair_results,
 )
 from space_debris.ml import FEATURES
 
@@ -172,3 +174,65 @@ def test_simulate_pairs_smoke():
     assert r.tangential_velocity_km_s >= 0.0
     ric_magnitude = (r.relative_radial_km**2 + r.relative_intrack_km**2 + r.relative_crosstrack_km**2) ** 0.5
     assert ric_magnitude == pytest.approx(r.min_distance_km, abs=1e-6)
+
+
+def _make_pair_result(**overrides) -> PairResult:
+    defaults = dict(
+        snapshot_utc="2026-07-01T00:00:00Z",
+        object_1="SAT-A",
+        object_2="SAT-B",
+        tle_epoch_1_utc="2026-06-30T00:00:00Z",
+        tle_epoch_2_utc="2026-06-30T00:00:00Z",
+        max_tle_age_hours=24.0,
+        tca_utc="2026-07-01T00:10:00Z",
+        time_to_tca_min=10.0,
+        current_distance_km=50.0,
+        min_distance_km=15.0,
+        relative_velocity_km_s=12.0,
+        altitude_1_km=550.0,
+        altitude_2_km=555.0,
+        altitude_difference_km=5.0,
+        relative_radial_km=3.0,
+        relative_intrack_km=4.0,
+        relative_crosstrack_km=0.0,
+        relative_inclination_deg=45.0,
+        radial_velocity_km_s=-1.0,
+        tangential_velocity_km_s=0.5,
+        approach_angle_deg=170.0,
+        risk_score=0.8,
+        fixed_threshold_alarm=1,
+        risk_label=1,
+    )
+    defaults.update(overrides)
+    return PairResult(**defaults)
+
+
+def test_write_pair_results_embeds_provenance_header(tmp_path):
+    rows = [_make_pair_result()]
+    path = tmp_path / "conjunction_dataset.csv"
+
+    write_pair_results(path, rows, source="leo_mixed preset", config_summary="horizon=720min")
+
+    raw_lines = path.read_text(encoding="utf-8").splitlines()
+    assert raw_lines[0].startswith("# generated_utc:")
+    assert any(line.startswith("# git_commit:") for line in raw_lines)
+    assert any("leo_mixed preset" in line for line in raw_lines)
+    assert any("horizon=720min" in line for line in raw_lines)
+
+    # Downstream readers must be able to skip the header and recover the data.
+    df = pd.read_csv(path, comment="#")
+    assert len(df) == 1
+    assert df.iloc[0]["object_1"] == "SAT-A"
+    assert df.iloc[0]["risk_label"] == 1
+
+
+def test_write_pair_results_without_provenance_args_still_readable(tmp_path):
+    # Backwards-compatible default: existing callers that don't pass
+    # source/config_summary still produce a valid, readable CSV.
+    rows = [_make_pair_result()]
+    path = tmp_path / "conjunction_dataset.csv"
+
+    write_pair_results(path, rows)
+
+    df = pd.read_csv(path, comment="#")
+    assert len(df) == 1

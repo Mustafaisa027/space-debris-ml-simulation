@@ -10,18 +10,39 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from sklearn.metrics import (
+    average_precision_score,
+    confusion_matrix,
+    precision_recall_curve,
+    precision_recall_fscore_support,
+)
 from skyfield.api import load
 
+from space_debris.ml import FEATURES, model_predictions_for_plotting
+from space_debris.provenance import png_provenance_metadata
 
 EARTH_RADIUS_KM = 6378.137
+
+# Every output CSV written by core.write_pair_results / ml.compare_models may
+# carry a '#'-prefixed provenance header (ROADMAP_YOL1.md GOREV 6); pandas
+# must be told to skip those lines rather than mis-parse one as the header row.
+_CSV_KWARGS = {"comment": "#"}
 
 
 def _ensure_dir(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
 
 
+def _savefig(path: Path, dpi: int = 180) -> None:
+    """Save the current figure with embedded PNG provenance metadata
+    (git commit + generation timestamp), then close it.
+    """
+    plt.savefig(path, dpi=dpi, metadata=png_provenance_metadata())
+    plt.close()
+
+
 def plot_risk_scatter(dataset_path: Path, output_path: Path) -> None:
-    df = pd.read_csv(dataset_path)
+    df = pd.read_csv(dataset_path, **_CSV_KWARGS)
     if df.empty:
         return
 
@@ -55,12 +76,11 @@ def plot_risk_scatter(dataset_path: Path, output_path: Path) -> None:
     non_risky = plt.Line2D([0], [0], marker="o", color="w", markerfacecolor="#2f5d8c", markeredgecolor="#222222", label="Proxy non-risky")
     plt.legend(handles=[risky, non_risky], loc="best")
     plt.tight_layout()
-    plt.savefig(output_path, dpi=180)
-    plt.close()
+    _savefig(output_path, dpi=180)
 
 
 def plot_tca_distance(dataset_path: Path, output_path: Path, candidate_threshold_km: float) -> None:
-    df = pd.read_csv(dataset_path)
+    df = pd.read_csv(dataset_path, **_CSV_KWARGS)
     if df.empty:
         return
 
@@ -86,12 +106,11 @@ def plot_tca_distance(dataset_path: Path, output_path: Path, candidate_threshold
     threshold = plt.Line2D([0], [0], color="#555555", linestyle="--", label="candidate threshold")
     plt.legend(handles=[threshold, risky, non_risky], loc="best")
     plt.tight_layout()
-    plt.savefig(output_path, dpi=180)
-    plt.close()
+    _savefig(output_path, dpi=180)
 
 
 def plot_altitude_distance(dataset_path: Path, output_path: Path) -> None:
-    df = pd.read_csv(dataset_path)
+    df = pd.read_csv(dataset_path, **_CSV_KWARGS)
     if df.empty:
         return
 
@@ -114,12 +133,11 @@ def plot_altitude_distance(dataset_path: Path, output_path: Path) -> None:
     cbar = plt.colorbar(scatter)
     cbar.set_label("Relative velocity (km/s)")
     plt.tight_layout()
-    plt.savefig(output_path, dpi=180)
-    plt.close()
+    _savefig(output_path, dpi=180)
 
 
 def plot_risk_heatmap(dataset_path: Path, output_path: Path) -> None:
-    df = pd.read_csv(dataset_path)
+    df = pd.read_csv(dataset_path, **_CSV_KWARGS)
     if len(df) < 30:
         if output_path.exists():
             output_path.unlink()
@@ -149,12 +167,11 @@ def plot_risk_heatmap(dataset_path: Path, output_path: Path) -> None:
     cbar = plt.colorbar(image)
     cbar.set_label("Mean risk score")
     plt.tight_layout()
-    plt.savefig(output_path, dpi=180)
-    plt.close()
+    _savefig(output_path, dpi=180)
 
 
 def plot_risk_ranking(dataset_path: Path, output_path: Path, top_n: int = 10) -> None:
-    df = pd.read_csv(dataset_path)
+    df = pd.read_csv(dataset_path, **_CSV_KWARGS)
     if df.empty:
         return
 
@@ -178,12 +195,11 @@ def plot_risk_ranking(dataset_path: Path, output_path: Path, top_n: int = 10) ->
     plt.title(f"Top Conjunction Candidates by Risk Score (top {len(top)})")
     plt.grid(axis="x", alpha=0.3)
     plt.tight_layout()
-    plt.savefig(output_path, dpi=180)
-    plt.close()
+    _savefig(output_path, dpi=180)
 
 
 def plot_model_metrics(report_path: Path, output_path: Path) -> None:
-    df = pd.read_csv(report_path)
+    df = pd.read_csv(report_path, **_CSV_KWARGS)
     if df.empty or "model" not in df:
         return
 
@@ -200,8 +216,7 @@ def plot_model_metrics(report_path: Path, output_path: Path) -> None:
             ha="center", va="center", fontsize=12, wrap=True,
         )
         plt.tight_layout()
-        plt.savefig(output_path, dpi=180)
-        plt.close()
+        _savefig(output_path, dpi=180)
         return
 
     # pr_auc/roc_auc lead; accuracy trails since it is not the headline
@@ -229,8 +244,7 @@ def plot_model_metrics(report_path: Path, output_path: Path) -> None:
     plt.grid(axis="y", alpha=0.3)
     plt.legend(ncol=4)
     plt.tight_layout()
-    plt.savefig(output_path, dpi=180)
-    plt.close()
+    _savefig(output_path, dpi=180)
 
 
 def _to_skyfield_time(ts, dt: datetime):
@@ -301,8 +315,7 @@ def plot_top_pair_eci_trajectory(
     ax.legend(loc="upper left")
     ax.view_init(elev=24, azim=38)
     plt.tight_layout()
-    plt.savefig(output_path, dpi=180)
-    plt.close()
+    _savefig(output_path, dpi=180)
 
 
 def plot_top_pair_altitudes(
@@ -339,8 +352,7 @@ def plot_top_pair_altitudes(
     plt.grid(True, alpha=0.35)
     plt.legend()
     plt.tight_layout()
-    plt.savefig(output_path, dpi=180)
-    plt.close()
+    _savefig(output_path, dpi=180)
 
 
 def _unit(vector: np.ndarray) -> np.ndarray:
@@ -431,8 +443,7 @@ def plot_encounter_plane(
     plt.axis("equal")
     plt.legend(loc="best")
     plt.tight_layout()
-    plt.savefig(output_path, dpi=180)
-    plt.close()
+    _savefig(output_path, dpi=180)
 
 
 def plot_relative_ric_components(
@@ -474,8 +485,7 @@ def plot_relative_ric_components(
     plt.grid(True, alpha=0.35)
     plt.legend()
     plt.tight_layout()
-    plt.savefig(output_path, dpi=180)
-    plt.close()
+    _savefig(output_path, dpi=180)
 
 
 def create_top_pair_physical_plots(
@@ -519,4 +529,173 @@ def create_pipeline_plots(
     plot_risk_ranking(dataset_path, outputs[3])
     plot_model_metrics(model_report_path, outputs[4])
     plot_risk_heatmap(dataset_path, outputs[5])
+    return [path for path in outputs if path.exists()]
+
+
+# --- Publication-ready figures (ROADMAP_YOL1.md GOREV 6) ---------------
+# 300 DPI, explicit titles/axis labels, one clear question each: does ML
+# beat the baseline (PR curves), where do the errors land (confusion
+# matrices), which features drive the tree models (feature importance), and
+# how arbitrary is the classical fixed-distance operating point (threshold
+# sensitivity)? These re-fit models purely for plotting via
+# space_debris.ml.model_predictions_for_plotting(); compare_models() /
+# time_series_cv_report() remain the source of truth for the numeric report.
+
+
+def plot_pr_curves(dataset_path: Path, output_path: Path, time_column: str | None = None) -> None:
+    predictions = model_predictions_for_plotting(dataset_path, time_column=time_column)
+    usable = {name: p for name, p in predictions.items() if len(np.unique(p["y_true"])) == 2}
+    if not usable:
+        return
+
+    _ensure_dir(output_path)
+    plt.figure(figsize=(8, 6))
+    for name, p in usable.items():
+        precision, recall, _ = precision_recall_curve(p["y_true"], p["scores"])
+        ap = average_precision_score(p["y_true"], p["scores"])
+        plt.plot(recall, precision, linewidth=1.8, label=f"{name} (AP={ap:.3f})")
+    baseline_rate = float(np.mean(next(iter(usable.values()))["y_true"]))
+    plt.axhline(
+        baseline_rate, color="#888888", linestyle=":", linewidth=1.3,
+        label=f"no-skill (positive rate={baseline_rate:.3f})",
+    )
+    plt.xlabel("Recall")
+    plt.ylabel("Precision")
+    plt.title("Precision-Recall Curves by Model (test split)")
+    plt.xlim(0.0, 1.02)
+    plt.ylim(0.0, 1.02)
+    plt.grid(True, alpha=0.3)
+    plt.legend(loc="best", fontsize=9)
+    plt.tight_layout()
+    _savefig(output_path, dpi=300)
+
+
+def plot_confusion_matrices(dataset_path: Path, output_path: Path, time_column: str | None = None) -> None:
+    predictions = model_predictions_for_plotting(dataset_path, time_column=time_column)
+    usable = {name: p for name, p in predictions.items() if len(np.unique(p["y_true"])) == 2}
+    if not usable:
+        return
+
+    _ensure_dir(output_path)
+    n = len(usable)
+    cols = min(3, n)
+    rows = -(-n // cols)  # ceil division
+    fig, axes = plt.subplots(rows, cols, figsize=(4.3 * cols, 4.0 * rows), squeeze=False)
+    class_labels = ["not risky", "risky"]
+    for idx, (name, p) in enumerate(usable.items()):
+        ax = axes[idx // cols][idx % cols]
+        cm = confusion_matrix(p["y_true"], p["pred"], labels=[0, 1])
+        ax.imshow(cm, cmap="Blues")
+        peak = cm.max() if cm.max() > 0 else 1
+        for i in range(2):
+            for j in range(2):
+                ax.text(
+                    j, i, str(cm[i, j]), ha="center", va="center",
+                    color="white" if cm[i, j] > peak / 2 else "black", fontsize=11,
+                )
+        ax.set_xticks([0, 1])
+        ax.set_xticklabels(class_labels)
+        ax.set_yticks([0, 1])
+        ax.set_yticklabels(class_labels)
+        ax.set_xlabel("Predicted")
+        ax.set_ylabel("Actual")
+        ax.set_title(name)
+
+    for idx in range(n, rows * cols):
+        axes[idx // cols][idx % cols].axis("off")
+
+    fig.suptitle("Confusion Matrices by Model (test split)", fontsize=13)
+    plt.tight_layout()
+    _savefig(output_path, dpi=300)
+
+
+def plot_feature_importance(dataset_path: Path, output_path: Path, time_column: str | None = None) -> None:
+    predictions = model_predictions_for_plotting(dataset_path, time_column=time_column)
+    importances: dict[str, np.ndarray] = {}
+    for name in ("random_forest", "xgboost"):
+        entry = predictions.get(name)
+        if entry and entry["model"] is not None and hasattr(entry["model"], "feature_importances_"):
+            importances[name] = np.asarray(entry["model"].feature_importances_)
+    if not importances:
+        return
+
+    _ensure_dir(output_path)
+    n_features = len(FEATURES)
+    y_pos = np.arange(n_features)
+    n_models = len(importances)
+    bar_height = 0.8 / n_models
+    plt.figure(figsize=(9, 0.45 * n_features + 2))
+    for i, (name, values) in enumerate(importances.items()):
+        offset = (i - (n_models - 1) / 2) * bar_height
+        plt.barh(y_pos + offset, values, height=bar_height, label=name)
+    plt.yticks(y_pos, FEATURES)
+    plt.gca().invert_yaxis()
+    plt.xlabel("Feature importance (impurity/gain-based)")
+    plt.title("Feature Importance: Tree-Based Models")
+    plt.legend(loc="lower right")
+    plt.grid(axis="x", alpha=0.3)
+    plt.tight_layout()
+    _savefig(output_path, dpi=300)
+
+
+def plot_threshold_sensitivity(
+    dataset_path: Path,
+    output_path: Path,
+    current_threshold_km: float | None = None,
+) -> None:
+    df = pd.read_csv(dataset_path, **_CSV_KWARGS)
+    if df.empty or "risk_label" not in df.columns:
+        return
+    y_true = df["risk_label"].astype(int)
+    if y_true.nunique() < 2:
+        return
+
+    max_thresh = max(float(df["min_distance_km"].quantile(0.75)), 1.0)
+    thresholds = np.linspace(0.0, max_thresh, 60)
+    precisions, recalls, f1s = [], [], []
+    for thresh in thresholds:
+        y_pred = (df["min_distance_km"] <= thresh).astype(int)
+        precision, recall, f1, _ = precision_recall_fscore_support(
+            y_true, y_pred, average="binary", zero_division=0
+        )
+        precisions.append(precision)
+        recalls.append(recall)
+        f1s.append(f1)
+
+    _ensure_dir(output_path)
+    plt.figure(figsize=(9, 6))
+    plt.plot(thresholds, precisions, label="Precision", linewidth=1.8, color="#2f5d8c")
+    plt.plot(thresholds, recalls, label="Recall", linewidth=1.8, color="#6b8f3e")
+    plt.plot(thresholds, f1s, label="F1", linewidth=1.8, color="#b33a3a")
+    if current_threshold_km is not None:
+        plt.axvline(
+            current_threshold_km, color="#222222", linestyle="--", linewidth=1.2,
+            label=f"current fixed_threshold_km={current_threshold_km:.1f}",
+        )
+    plt.xlabel("Candidate fixed-distance threshold (km)")
+    plt.ylabel("Score")
+    plt.title("Fixed-Distance Baseline: Threshold Sensitivity")
+    plt.ylim(0.0, 1.05)
+    plt.grid(True, alpha=0.3)
+    plt.legend(loc="best")
+    plt.tight_layout()
+    _savefig(output_path, dpi=300)
+
+
+def create_publication_plots(
+    dataset_path: Path,
+    output_dir: Path,
+    time_column: str | None = None,
+    current_threshold_km: float | None = None,
+) -> list[Path]:
+    outputs = [
+        output_dir / "pub_pr_curves.png",
+        output_dir / "pub_confusion_matrices.png",
+        output_dir / "pub_feature_importance.png",
+        output_dir / "pub_threshold_sensitivity.png",
+    ]
+    plot_pr_curves(dataset_path, outputs[0], time_column=time_column)
+    plot_confusion_matrices(dataset_path, outputs[1], time_column=time_column)
+    plot_feature_importance(dataset_path, outputs[2], time_column=time_column)
+    plot_threshold_sensitivity(dataset_path, outputs[3], current_threshold_km=current_threshold_km)
     return [path for path in outputs if path.exists()]

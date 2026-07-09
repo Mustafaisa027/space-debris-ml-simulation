@@ -14,8 +14,9 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import datetime, timezone
 from pathlib import Path
+
+from space_debris.provenance import generated_utc, git_commit_hash
 
 import matplotlib
 
@@ -40,7 +41,9 @@ MIN_ROWS_FOR_RELIABLE_CALIBRATION = 200
 
 
 def load_history(path: Path) -> pd.DataFrame:
-    df = pd.read_csv(path)
+    # comment="#" tolerates a provenance header (ROADMAP_YOL1.md GOREV 6,
+    # space_debris.provenance) if one is ever present on this file.
+    df = pd.read_csv(path, comment="#")
     missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
     if missing:
         raise ValueError(f"{path} is missing required columns: {missing}")
@@ -212,7 +215,8 @@ def write_calibration_report(path: Path, history_path: Path, summary: dict, cali
     applied automatically.
     """
     report = {
-        "generated_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "generated_utc": generated_utc(),
+        "git_commit": git_commit_hash(),
         "source_history": str(history_path),
         "distribution_summary": summary,
         "calibration": calibration,
