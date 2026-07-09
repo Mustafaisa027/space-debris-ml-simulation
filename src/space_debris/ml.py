@@ -25,6 +25,15 @@ from sklearn.svm import SVC
 # because it is a monotone transform of the same quantities and would leak the
 # target. This is what lets the ML models be compared fairly against the
 # fixed-distance baseline.
+#
+# The relative_*/radial_velocity/tangential_velocity/approach_angle features
+# (ROADMAP_YOL1.md GOREV 5) are geometric decompositions computed from the
+# position/velocity VECTORS, not rescalings of the label-defining scalars:
+# the RIC components describe orientation (radial/in-track/cross-track), not
+# magnitude; radial/tangential velocity and approach_angle are evaluated at
+# snapshot time rather than at TCA; and relative_inclination_deg is pure
+# orbital-plane geometry. None of them is a duplicate or monotone transform
+# of min_distance_km / relative_velocity_km_s.
 FEATURES = [
     "time_to_tca_min",
     "current_distance_km",
@@ -32,6 +41,13 @@ FEATURES = [
     "relative_velocity_km_s",
     "altitude_difference_km",
     "max_tle_age_hours",
+    "relative_radial_km",
+    "relative_intrack_km",
+    "relative_crosstrack_km",
+    "relative_inclination_deg",
+    "radial_velocity_km_s",
+    "tangential_velocity_km_s",
+    "approach_angle_deg",
 ]
 
 # Reported for every model. pr_auc/roc_auc lead the report and are the

@@ -9,6 +9,7 @@ from itertools import combinations
 from pathlib import Path
 from typing import Iterable
 
+import numpy as np
 from skyfield.api import EarthSatellite, load
 
 EARTH_RADIUS_KM = 6378.137
@@ -37,6 +38,31 @@ class PairResult:
     altitude_1_km: float
     altitude_2_km: float
     altitude_difference_km: float
+    # --- Derived geometry features (ROADMAP_YOL1.md GOREV 5) ---
+    # RIC decomposition of the relative position AT TCA, in satellite 1's
+    # local orbital frame: describes HOW the close approach is oriented
+    # (radial/in-track/cross-track), not just how close it is. The three
+    # combine in quadrature to min_distance_km, but individually each one is
+    # a distinct directional signal, not a duplicate/monotone copy of it.
+    relative_radial_km: float
+    relative_intrack_km: float
+    relative_crosstrack_km: float
+    # Angle between the two orbits' angular-momentum directions at TCA: 0 =
+    # co-planar/co-rotating, 90 = perpendicular planes, 180 = co-planar
+    # counter-rotating. Pure orbit-geometry information, independent of how
+    # close/fast this particular encounter is.
+    relative_inclination_deg: float
+    # Radial (closing/opening rate) vs tangential split of the CURRENT
+    # relative velocity (evaluated at snapshot time, not at TCA -- at TCA the
+    # closing rate is ~0 by definition of a distance minimum, so it carries
+    # no signal there). Negative radial velocity means the pair is currently
+    # approaching each other.
+    radial_velocity_km_s: float
+    tangential_velocity_km_s: float
+    # Angle between the current relative-position and relative-velocity
+    # vectors: ~180 deg = head-on approach along the line of sight, ~90 deg =
+    # tangential/grazing pass, ~0 deg = directly receding.
+    approach_angle_deg: float
     risk_score: float
     fixed_threshold_alarm: int
     risk_label: int
@@ -68,6 +94,14 @@ def _altitude_km(position_km) -> float:
     return _norm(position_km) - EARTH_RADIUS_KM
 
 
+def _unit(vec) -> np.ndarray:
+    array = np.asarray(vec, dtype=float)
+    norm = np.linalg.norm(array)
+    if norm < 1e-9:
+        return np.zeros(3)
+    return array / norm
+
+
 def _iso_z(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -84,6 +118,66 @@ def _sat_epoch_iso(sat: EarthSatellite) -> str:
 def _tle_age_hours(sat: EarthSatellite, reference_utc: datetime) -> float:
     epoch = sat.epoch.utc_datetime().astimezone(timezone.utc)
     return abs((reference_utc - epoch).total_seconds()) / 3600.0
+
+
+def _encounter_geometry_features(
+    p1_start, p2_start, v1_start, v2_start,
+    p1_tca, p2_tca, v1_tca, v2_tca,
+) -> dict[str, float]:
+    """Derived geometry features for one conjunction pair (ROADMAP_YOL1.md
+    GOREV 5): relative-position/velocity components, radial/tangential
+    velocity split, approach angle, and encounter (orbital-plane) geometry.
+
+    A pure function of position/velocity vectors -- computed here so it can
+    be unit tested directly with hand-built vectors, independent of SGP4
+    propagation. None of the outputs is a duplicate or monotone transform of
+    min_distance_km / relative_velocity_km_s: the RIC components describe
+    ORIENTATION at TCA (not magnitude), radial/tangential velocity and
+    approach_angle are evaluated at snapshot time rather than at TCA, and
+    relative_inclination_deg is pure orbital-plane geometry.
+    """
+    # RIC decomposition of the relative position AT TCA, in satellite 1's
+    # local orbital frame (same convention as
+    # space_debris.plots.plot_relative_ric_components).
+    rel_r_tca = np.asarray(p2_tca) - np.asarray(p1_tca)
+    r_hat = _unit(p1_tca)
+    h1_hat = _unit(np.cross(np.asarray(p1_tca), np.asarray(v1_tca)))
+    i_hat = _unit(np.cross(h1_hat, r_hat))
+
+    # Angle between the two orbital planes' angular-momentum directions: 0 =
+    # co-planar/co-rotating, 90 = perpendicular planes, 180 = co-planar
+    # counter-rotating.
+    h2_hat = _unit(np.cross(np.asarray(p2_tca), np.asarray(v2_tca)))
+    relative_inclination_deg = float(np.degrees(np.arccos(np.clip(np.dot(h1_hat, h2_hat), -1.0, 1.0))))
+
+    # Radial (closing/opening rate) vs tangential split of the CURRENT
+    # relative velocity, evaluated at snapshot time -- at TCA the closing
+    # rate is ~0 by definition of a distance minimum, so it carries no
+    # signal there. Negative radial velocity means the pair is approaching.
+    rel_v_start = np.asarray(v2_start) - np.asarray(v1_start)
+    rel_r_start = np.asarray(p2_start) - np.asarray(p1_start)
+    separation_hat_start = _unit(rel_r_start)
+    radial_velocity_km_s = float(np.dot(rel_v_start, separation_hat_start))
+    current_relative_speed = float(np.linalg.norm(rel_v_start))
+    tangential_velocity_km_s = float(
+        math.sqrt(max(current_relative_speed**2 - radial_velocity_km_s**2, 0.0))
+    )
+    if current_relative_speed > 1e-9:
+        approach_angle_deg = float(
+            np.degrees(np.arccos(np.clip(radial_velocity_km_s / current_relative_speed, -1.0, 1.0)))
+        )
+    else:
+        approach_angle_deg = 90.0
+
+    return {
+        "relative_radial_km": float(np.dot(rel_r_tca, r_hat)),
+        "relative_intrack_km": float(np.dot(rel_r_tca, i_hat)),
+        "relative_crosstrack_km": float(np.dot(rel_r_tca, h1_hat)),
+        "relative_inclination_deg": relative_inclination_deg,
+        "radial_velocity_km_s": radial_velocity_km_s,
+        "tangential_velocity_km_s": tangential_velocity_km_s,
+        "approach_angle_deg": approach_angle_deg,
+    }
 
 
 def _risk_label(
@@ -157,8 +251,10 @@ def simulate_pairs(
 
     for sat1, sat2 in combinations(satellites, 2):
         start_t = _to_skyfield_time(ts, start_utc)
-        p1_start = sat1.at(start_t).position.km
-        p2_start = sat2.at(start_t).position.km
+        geocentric_1_start = sat1.at(start_t)
+        geocentric_2_start = sat2.at(start_t)
+        p1_start = geocentric_1_start.position.km
+        p2_start = geocentric_2_start.position.km
         alt1 = _altitude_km(p1_start)
         alt2 = _altitude_km(p2_start)
         if not (leo_min_altitude_km <= alt1 <= leo_max_altitude_km):
@@ -180,10 +276,22 @@ def simulate_pairs(
 
         tca_dt = start_utc + timedelta(minutes=best_offset)
         tca_t = _to_skyfield_time(ts, tca_dt)
-        v1 = sat1.at(tca_t).velocity.km_per_s
-        v2 = sat2.at(tca_t).velocity.km_per_s
+        geocentric_1_tca = sat1.at(tca_t)
+        geocentric_2_tca = sat2.at(tca_t)
+        p1_tca = geocentric_1_tca.position.km
+        p2_tca = geocentric_2_tca.position.km
+        v1 = geocentric_1_tca.velocity.km_per_s
+        v2 = geocentric_2_tca.velocity.km_per_s
         relative_velocity = _distance_km(v1, v2)
         altitude_difference = abs(alt1 - alt2)
+
+        v1_start = geocentric_1_start.velocity.km_per_s
+        v2_start = geocentric_2_start.velocity.km_per_s
+        geometry = _encounter_geometry_features(
+            p1_start, p2_start, v1_start, v2_start,
+            p1_tca, p2_tca, v1, v2,
+        )
+
         # risk_score is a human-readable ranking aid only. It is written to
         # the CSV for triage but is deliberately EXCLUDED from the ML feature
         # set (see space_debris.ml.FEATURES) to avoid target leakage.
@@ -212,6 +320,13 @@ def simulate_pairs(
                 altitude_1_km=alt1,
                 altitude_2_km=alt2,
                 altitude_difference_km=altitude_difference,
+                relative_radial_km=geometry["relative_radial_km"],
+                relative_intrack_km=geometry["relative_intrack_km"],
+                relative_crosstrack_km=geometry["relative_crosstrack_km"],
+                relative_inclination_deg=geometry["relative_inclination_deg"],
+                radial_velocity_km_s=geometry["radial_velocity_km_s"],
+                tangential_velocity_km_s=geometry["tangential_velocity_km_s"],
+                approach_angle_deg=geometry["approach_angle_deg"],
                 risk_score=risk_score,
                 fixed_threshold_alarm=int(best_distance <= fixed_threshold_km),
                 risk_label=risk_label,
@@ -244,6 +359,13 @@ def write_pair_results(path: Path, rows: list[PairResult]) -> None:
                     "altitude_1_km": f"{row.altitude_1_km:.3f}",
                     "altitude_2_km": f"{row.altitude_2_km:.3f}",
                     "altitude_difference_km": f"{row.altitude_difference_km:.3f}",
+                    "relative_radial_km": f"{row.relative_radial_km:.3f}",
+                    "relative_intrack_km": f"{row.relative_intrack_km:.3f}",
+                    "relative_crosstrack_km": f"{row.relative_crosstrack_km:.3f}",
+                    "relative_inclination_deg": f"{row.relative_inclination_deg:.3f}",
+                    "radial_velocity_km_s": f"{row.radial_velocity_km_s:.6f}",
+                    "tangential_velocity_km_s": f"{row.tangential_velocity_km_s:.6f}",
+                    "approach_angle_deg": f"{row.approach_angle_deg:.3f}",
                     "risk_score": f"{row.risk_score:.10f}",
                     "fixed_threshold_alarm": row.fixed_threshold_alarm,
                     "risk_label": row.risk_label,
