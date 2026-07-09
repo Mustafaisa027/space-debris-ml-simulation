@@ -12,7 +12,7 @@ from space_debris.core import (
     write_distance_timeseries,
     write_pair_results,
 )
-from space_debris.ml import compare_models
+from space_debris.ml import compare_models, compare_to_baseline_pr_auc
 from space_debris.plots import create_pipeline_plots, create_top_pair_physical_plots
 
 
@@ -152,6 +152,8 @@ def main() -> None:
         )
     print()
     print(report.to_string(index=False))
+    print()
+    print(compare_to_baseline_pr_auc(report))
 
 
 if __name__ == "__main__":

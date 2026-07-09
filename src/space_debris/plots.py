@@ -204,7 +204,9 @@ def plot_model_metrics(report_path: Path, output_path: Path) -> None:
         plt.close()
         return
 
-    metrics = ["precision", "recall", "f1", "accuracy"]
+    # pr_auc/roc_auc lead; accuracy trails since it is not the headline
+    # metric under the dataset's severe class imbalance.
+    metrics = ["pr_auc", "roc_auc", "precision", "recall", "f1", "accuracy"]
     available = [metric for metric in metrics if metric in df.columns]
     plot_df = df[["model"] + available].copy()
     for metric in available:
