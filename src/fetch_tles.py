@@ -20,14 +20,18 @@ DEFAULT_OBJECTS = {
 
 # CelesTrak's GROUP endpoint (e.g. GROUP=STARLINK) has been observed to return
 # HTTP 403 even for small requests, while the per-object CATNR endpoint stays
-# reachable. LEO_MIXED_CATALOG is a curated fallback: 50 long-lived, publicly
+# reachable. LEO_MIXED_CATALOG is a curated fallback: 43 long-lived, publicly
 # documented objects spanning inclinations from ~28 deg to ~98 deg (sun-
-# synchronous weather/earth-observation satellites, ISS/CSS/crew and cargo
+# synchronous weather/earth-observation satellites, ISS/CSS and cargo
 # traffic, ocean-altimetry and polar-orbiting science missions, and the
 # Iridium 33 debris field from the 2009 Iridium 33 / Kosmos 2251 collision)
 # so their orbital planes actually cross, unlike a single constellation whose
-# satellites share near-identical planes and altitudes. Verify/refresh against
-# CelesTrak before a final scientific run.
+# satellites share near-identical planes and altitudes. Docked/same-platform
+# modules and crew/cargo vehicles (POISK, ISS NAUKA, Crew Dragon, Progress-MS,
+# Cygnus, CSS Wentian, CSS Mengtian) are excluded: they share the station's
+# orbital position, so their separation is ~0 km and would register as false
+# "close approach" positives despite there being no independent collision
+# risk. Verify/refresh against CelesTrak before a final scientific run.
 LEO_MIXED_CATALOG: dict[str, str] = {
     "25338": "NOAA 15",              # ~98.5 deg, sun-synchronous
     "43013": "NOAA 20",              # ~98.7 deg, sun-synchronous
@@ -42,14 +46,7 @@ LEO_MIXED_CATALOG: dict[str, str] = {
     "41335": "SENTINEL-3A",          # ~98.6 deg, sun-synchronous
     "42969": "SENTINEL-5P",          # ~98.8 deg, sun-synchronous
     "25544": "ISS (ZARYA)",          # ~51.6 deg
-    "36086": "POISK",                # ~51.6 deg, ISS module
-    "49044": "ISS (NAUKA)",          # ~51.6 deg, ISS module
-    "67796": "CREW DRAGON 12",       # ~51.6 deg, ISS traffic
-    "68319": "PROGRESS-MS 33",       # ~51.6 deg, ISS traffic
-    "68689": "CYGNUS NG-24",         # ~51.6 deg, ISS traffic
     "48274": "CSS (TIANHE)",         # ~41.5 deg, Chinese Space Station
-    "53239": "CSS (WENTIAN)",        # ~41.5 deg, Chinese Space Station
-    "54216": "CSS (MENGTIAN)",       # ~41.5 deg, Chinese Space Station
     "20580": "HUBBLE SPACE TELESCOPE",  # ~28.5 deg
     "41884": "CYGFM05",              # ~35.0 deg, CYGNSS
     "41885": "CYGFM04",              # ~34.9 deg, CYGNSS
