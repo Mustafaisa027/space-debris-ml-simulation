@@ -17,6 +17,7 @@ from sklearn.model_selection import TimeSeriesSplit, train_test_split
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
+from sklearn.tree import DecisionTreeClassifier
 
 from space_debris.provenance import write_csv_text_with_provenance
 
@@ -133,6 +134,9 @@ def _build_models(scale_pos_weight: float) -> dict:
         "logistic_regression": make_pipeline(
             StandardScaler(), LogisticRegression(max_iter=1000, class_weight="balanced")
         ),
+        "decision_tree": DecisionTreeClassifier(
+            random_state=42, class_weight="balanced"
+        ),
         "random_forest": RandomForestClassifier(
             n_estimators=100, random_state=42, class_weight="balanced"
         ),
@@ -143,6 +147,16 @@ def _build_models(scale_pos_weight: float) -> dict:
 
         models["xgboost"] = XGBClassifier(
             eval_metric="logloss", random_state=42, scale_pos_weight=scale_pos_weight
+        )
+    except Exception:
+        pass
+    try:
+        from lightgbm import LGBMClassifier
+
+        models["lightgbm"] = LGBMClassifier(
+            random_state=42,
+            class_weight="balanced",
+            verbosity=-1,
         )
     except Exception:
         pass
@@ -235,6 +249,16 @@ def _evaluate_split(df: pd.DataFrame, x_train, x_test, y_train, y_test, split_na
             _not_enough_data_row(
                 "xgboost",
                 "xgboost is not installed.",
+                train_rows=int(len(y_train)),
+                test_rows=int(len(y_test)),
+                split=split_name,
+            )
+        )
+    if "lightgbm" not in models:
+        rows.append(
+            _not_enough_data_row(
+                "lightgbm",
+                "lightgbm is not installed.",
                 train_rows=int(len(y_train)),
                 test_rows=int(len(y_test)),
                 split=split_name,

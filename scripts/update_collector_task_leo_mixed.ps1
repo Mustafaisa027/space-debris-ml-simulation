@@ -19,7 +19,7 @@ Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue | Unregister
 
 $Action = New-ScheduledTaskAction `
   -Execute $Python `
-  -Argument "`"$Script`" --once --preset leo_mixed --history `"outputs\history\conjunction_observations.csv`"" `
+  -Argument "`"$Script`" --once --preset leo_mixed --history `"outputs\history\conjunction_observations_v2.csv`"" `
   -WorkingDirectory $Root
 
 $Trigger = New-ScheduledTaskTrigger `

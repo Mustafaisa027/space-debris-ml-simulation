@@ -8,8 +8,11 @@ the limitations explicitly rather than leaving them implicit.
 
 ## 1. Data
 
-**Source.** Two-Line Element (TLE) sets from the CelesTrak GP API
-(`celestrak.org/NORAD/elements/gp.php`), fetched by `src/fetch_tles.py`.
+**Source.** Two-Line Element (TLE) sets are fetched by `src/fetch_tles.py`.
+CelesTrak's GP API (`celestrak.org/NORAD/elements/gp.php`) is the primary
+provider. The authenticated Space-Track `gp` endpoint is an optional fallback
+for explicit/preset NORAD catalogue lists; credentials are read only from
+`SPACETRACK_IDENTITY` and `SPACETRACK_PASSWORD` environment variables.
 
 **Acquisition strategy.** CelesTrak's `GROUP` endpoint (e.g.
 `GROUP=STARLINK`) was observed to return HTTP 403 even for small requests,
@@ -22,16 +25,26 @@ from that observation:
   ~98-99 deg, ~28.5 deg) so the orbital planes actually cross — unlike a
   single constellation, whose satellites share near-identical planes and
   altitudes and therefore rarely produce genuine close approaches.
-- `fetch_gp_with_retry()` retries 403/429 responses with exponential
-  backoff; if a `GROUP` query is blocked, `fetch_group_blocks()` falls back
+- `fetch_gp_with_retry()` retries transient transport failures and HTTP
+  403/408/425/429/5xx responses with capped attempts, exponential backoff,
+  and jitter; if a `GROUP` query is blocked, `fetch_group_blocks()` falls back
   to the curated `CATNR` catalog registered for that group name
   (`GROUP_FALLBACK_CATALOGS`).
+
+**Validation and commit policy.** Every accepted TLE pair must have line
+numbers 1/2, identical catalogue identifiers, exactly 69 characters per line,
+and valid modulo-10 checksums. HTML, oversized responses, malformed blocks,
+and explicit-catalogue coverage below 90% are rejected. Snapshot and history
+files are written to temporary files, flushed, and atomically replaced only
+after validation. Thus a provider or pipeline failure can skip a collection
+cycle, but cannot overwrite the last valid file or append shifted columns.
 
 **Collection cadence.** `src/collect_observations.py` polls CelesTrak no
 more often than every 2 hours (CelesTrak's own stated GP refresh interval)
 and defaults to the `leo_mixed` preset. A single fetch or simulation failure
 is logged and the collector proceeds to the next cycle rather than aborting
-a multi-day collection run.
+a multi-day collection run. In `--once` mode it instead returns a non-zero
+exit status, which prevents GitHub Actions from publishing an incomplete run.
 
 **Provenance.** Every TLE snapshot is paired with a sidecar
 `<snapshot>.json` recording the source (preset/group/explicit catnrs),
@@ -43,6 +56,15 @@ fetch timestamp, object count, and git commit. Every derived CSV
 PNG figure embeds the same commit hash and generation timestamp as PNG
 metadata. This lets any table or figure in the paper be traced back to the
 exact code version and configuration that produced it.
+
+**Schema versioning.** The current accumulated file is
+`conjunction_observations_v2.csv`. `src/rebuild_history.py` reconstructs it
+from immutable per-run datasets and includes only the current 24-column pair
+schema; legacy schemas are preserved as raw runs and listed in
+`history_rebuild_report.json`, never silently coerced into shifted columns.
+Historical rows involving station-attached/docked modules and vehicles are
+also excluded and counted in that report; their near-zero separation from the
+parent station is not an independent conjunction.
 
 ## 2. Label Definition
 
@@ -72,11 +94,13 @@ target range (default 2-15%). This is a **mechanism**, not a one-time
 constant: it is rerun as collection history grows, and its output
 (`config/threshold_calibration.json`) is a disposable, timestamped report
 that a human reads before hand-editing `config/experiment_60_days.json` —
-it never patches that config automatically. With only a few hours of
-`leo_mixed` collection, the calibration report is correctly flagged
-`reliable: false` (fewer than ~200 accumulated pairs); this is expected
-behavior, not a bug, and the honest response is to wait for more data, not
-to lower the reliability bar.
+it never patches that config automatically. The distance search is capped at
+the 50 km candidate-screening limit, so calibration cannot manufacture
+positive labels by redefining "close approach" as hundreds or thousands of
+kilometres. A report is `reliable: true` only when there are at least 200 rows
+and a physically bounded threshold reaches the requested positive-rate range.
+Otherwise the honest response is to expand/continue collection, not to lower
+the reliability bar.
 
 ## 3. Features
 
@@ -110,13 +134,24 @@ of them is a duplicate or monotone transform of `min_distance_km` /
 
 ## 4. Models
 
-`space_debris.ml._build_models()` compares five classifiers against a fixed
-distance threshold: Logistic Regression, Random Forest, SVM (RBF kernel), and
-XGBoost (skipped only if the package is absent), all imbalance-aware:
+`space_debris.ml._build_models()` compares six classifiers against a fixed
+distance threshold. Logistic Regression and SVM (RBF kernel) are retained as
+weak baselines. A single Decision Tree provides the direct reference needed to
+justify the variance reduction from Random Forest. Random Forest, XGBoost, and
+LightGBM are the primary candidates; either boosting implementation is reported
+as unavailable rather than aborting a run if its optional native package cannot
+be imported. All learners are imbalance-aware:
 
-- LogReg / RF / SVM use `class_weight="balanced"`.
+- LogReg / Decision Tree / RF / SVM / LightGBM use
+  `class_weight="balanced"`.
 - XGBoost uses `scale_pos_weight = n_negative / n_positive`, computed from
   the **training** split only.
+
+This ordering follows the adviser-requested comparison: the single tree tests
+whether ensembling is worthwhile, while the two boosting families provide
+independent high-capacity alternatives to Random Forest. No oversampling is
+performed at this stage; SMOTE remains deferred until enough genuine positive
+observations exist to synthesize from.
 
 This matters because real conjunction events are rare (see Limitations):
 without reweighting, a classifier can achieve near-perfect accuracy by
@@ -177,14 +212,20 @@ single operating point is varied — illustrating that the chosen
 - **SGP4 accuracy degrades with TLE age.** `max_tle_age_hours` triggers a
   data-quality warning (default 14 days); stale elements make TCA and
   minimum-distance figures illustrative rather than operational.
+- **Classic TLE catalogue-number ceiling.** The fixed-width TLE representation
+  cannot represent all newly assigned catalogue numbers above 99999. The
+  present paper catalogue remains below that boundary; expanding beyond it
+  requires an OMM ingestion path (preferably XML) rather than truncating or
+  inventing identifiers.
 - **Real conjunctions are rare.** A single mixed-orbit snapshot yields very
   few candidate conjunctions; no classifier can reliably beat the
   fixed-distance baseline on it. The paper's comparison is meant to run on
   accumulated multi-day observations, not a single snapshot.
-- **Threshold calibration needs volume.** `analyze_distributions.py` flags
-  its own output `reliable: false` below ~200 accumulated pairs. Early-stage
-  results in this repository reflect only a few hours of `leo_mixed`
-  collection and should not be read as calibrated thresholds.
+- **Threshold calibration needs useful encounters, not merely row volume.**
+  `analyze_distributions.py` flags its output `reliable: false` below 200 rows
+  or when no threshold at or below 50 km reaches the requested positive-rate
+  range. Early-stage `leo_mixed` results should not be read as calibrated
+  merely because they contain many distant pairs.
 - **Synthetic demo data is clearly marked.** `make_demo_tles.py` generates a
   deterministic synthetic catalogue (`DEMO-SAT-xx`) so the code path, plots,
   and model comparison can be exercised offline. It is never used as a

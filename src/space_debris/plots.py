@@ -612,7 +612,7 @@ def plot_confusion_matrices(dataset_path: Path, output_path: Path, time_column: 
 def plot_feature_importance(dataset_path: Path, output_path: Path, time_column: str | None = None) -> None:
     predictions = model_predictions_for_plotting(dataset_path, time_column=time_column)
     importances: dict[str, np.ndarray] = {}
-    for name in ("random_forest", "xgboost"):
+    for name in ("decision_tree", "random_forest", "xgboost", "lightgbm"):
         entry = predictions.get(name)
         if entry and entry["model"] is not None and hasattr(entry["model"], "feature_importances_"):
             importances[name] = np.asarray(entry["model"].feature_importances_)

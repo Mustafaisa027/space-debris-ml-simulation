@@ -1,15 +1,25 @@
 from __future__ import annotations
 
 import argparse
+import os
+import random
+import tempfile
 import time
+from dataclasses import dataclass
 from http.client import HTTPResponse
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import quote
-from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote, urlencode
+from urllib.request import HTTPCookieProcessor, Request, build_opener, urlopen
 
 
 CELESTRAK_GP_URL = "https://celestrak.org/NORAD/elements/gp.php?{query}={value}&FORMAT=TLE"
+SPACETRACK_LOGIN_URL = "https://www.space-track.org/ajaxauth/login"
+SPACETRACK_GP_URL = (
+    "https://www.space-track.org/basicspacedata/query/class/gp/"
+    "norad_cat_id/{catnrs}/orderby/norad_cat_id/format/tle"
+)
 DEFAULT_OBJECTS = {
     "25544": "ISS (ZARYA)",
     "25338": "NOAA 15",
@@ -90,13 +100,25 @@ GROUP_FALLBACK_CATALOGS: dict[str, dict[str, str]] = {
     "STARLINK": LEO_MIXED_CATALOG,
 }
 
-RETRYABLE_STATUS_CODES = {403, 429}
+RETRYABLE_STATUS_CODES = {403, 408, 425, 429, 500, 502, 503, 504}
+MAX_RESPONSE_BYTES = 10 * 1024 * 1024
+
+
+@dataclass(frozen=True)
+class FetchReport:
+    provider: str
+    catalog_ids: tuple[str, ...]
+    requested_count: int
 
 
 class CelesTrakHTTPError(RuntimeError):
     def __init__(self, status_code: int, reason: str):
         self.status_code = status_code
         super().__init__(f"CelesTrak HTTP {status_code}: {reason}")
+
+
+class TLETransportError(RuntimeError):
+    """A transient network/transport failure suitable for retry."""
 
 
 def parse_args() -> argparse.Namespace:
@@ -110,6 +132,12 @@ def parse_args() -> argparse.Namespace:
         help="use a curated multi-orbit CATNR catalog instead of --catnr/--group",
     )
     parser.add_argument("--max-objects", type=int, default=None, help="limit objects written to the output file")
+    parser.add_argument(
+        "--provider",
+        choices=["auto", "celestrak", "space-track"],
+        default="auto",
+        help="auto uses CelesTrak first and Space-Track only when credentials are configured",
+    )
     parser.add_argument("--output", default=None, help="output TLE file")
     return parser.parse_args()
 
@@ -117,26 +145,37 @@ def parse_args() -> argparse.Namespace:
 def _read_response(response: HTTPResponse) -> str:
     if response.status != 200:
         raise CelesTrakHTTPError(response.status, response.reason)
-    return response.read().decode("utf-8").strip()
+    content_type = response.headers.get("Content-Type", "").lower()
+    if "text/html" in content_type:
+        raise ValueError("Provider returned HTML instead of orbital elements")
+    payload = response.read(MAX_RESPONSE_BYTES + 1)
+    if len(payload) > MAX_RESPONSE_BYTES:
+        raise ValueError(f"Provider response exceeded {MAX_RESPONSE_BYTES} bytes")
+    return payload.decode("utf-8-sig").strip()
 
 
 def fetch_gp(query: str, value: str) -> str:
     query = query.upper()
     url = CELESTRAK_GP_URL.format(query=query, value=quote(value.upper() if query == "GROUP" else value))
     request = Request(url, headers={"User-Agent": "space-debris-iac-research/0.1"})
-    with urlopen(request, timeout=30) as response:
-        text = _read_response(response)
+    try:
+        with urlopen(request, timeout=30) as response:
+            text = _read_response(response)
+    except HTTPError as exc:
+        raise CelesTrakHTTPError(exc.code, str(exc.reason)) from exc
+    except (URLError, TimeoutError, ConnectionError, OSError) as exc:
+        raise TLETransportError(f"CelesTrak transport failure: {exc}") from exc
     if "DOCTYPE html" in text[:200] or "<html" in text[:200].lower():
         raise RuntimeError(f"CelesTrak returned HTML instead of TLE data for {query}={value}")
     return text
 
 
-def fetch_gp_with_retry(query: str, value: str, retries: int = 3, base_delay: float = 1.5) -> str:
+def fetch_gp_with_retry(query: str, value: str, retries: int = 4, base_delay: float = 1.5) -> str:
     """Call fetch_gp, retrying with exponential backoff on 403/429 responses.
 
     Non-retryable errors (e.g. a genuinely invalid CATNR) propagate immediately.
     """
-    last_error: CelesTrakHTTPError | None = None
+    last_error: Exception | None = None
     for attempt in range(1, retries + 1):
         try:
             return fetch_gp(query, value)
@@ -145,12 +184,40 @@ def fetch_gp_with_retry(query: str, value: str, retries: int = 3, base_delay: fl
                 raise
             last_error = exc
             if attempt < retries:
-                time.sleep(base_delay * (2 ** (attempt - 1)))
+                time.sleep(base_delay * (2 ** (attempt - 1)) + random.uniform(0.0, 0.25))
+        except TLETransportError as exc:
+            last_error = exc
+            if attempt < retries:
+                time.sleep(base_delay * (2 ** (attempt - 1)) + random.uniform(0.0, 0.25))
     assert last_error is not None
-    raise CelesTrakHTTPError(
-        last_error.status_code,
-        f"{last_error} (gave up after {retries} attempts for {query}={value})",
-    )
+    message = f"{last_error} (gave up after {retries} attempts for {query}={value})"
+    if isinstance(last_error, CelesTrakHTTPError):
+        raise CelesTrakHTTPError(last_error.status_code, message) from last_error
+    raise TLETransportError(message) from last_error
+
+
+def tle_checksum_is_valid(line: str) -> bool:
+    if len(line) != 69 or not line[-1].isdigit():
+        return False
+    checksum = sum(int(char) for char in line[:68] if char.isdigit())
+    checksum += line[:68].count("-")
+    return checksum % 10 == int(line[-1])
+
+
+def validate_tle_pair(line1: str, line2: str, expected_catnr: str | None = None) -> str:
+    if not line1.startswith("1 ") or not line2.startswith("2 "):
+        raise ValueError("TLE lines must start with '1 ' and '2 '")
+    if len(line1) != 69 or len(line2) != 69:
+        raise ValueError(f"TLE lines must each be exactly 69 characters, got {len(line1)} and {len(line2)}")
+    catalog_1 = line1[2:7].strip()
+    catalog_2 = line2[2:7].strip()
+    if not catalog_1 or catalog_1 != catalog_2:
+        raise ValueError(f"TLE catalog identifiers disagree: {catalog_1!r} vs {catalog_2!r}")
+    if expected_catnr and catalog_1 != expected_catnr:
+        raise ValueError(f"Expected CATNR={expected_catnr}, provider returned CATNR={catalog_1}")
+    if not tle_checksum_is_valid(line1) or not tle_checksum_is_valid(line2):
+        raise ValueError(f"TLE checksum validation failed for CATNR={catalog_1}")
+    return catalog_1
 
 
 def normalize_tle_blocks(text: str, fallback_name: str | None = None) -> list[str]:
@@ -159,10 +226,12 @@ def normalize_tle_blocks(text: str, fallback_name: str | None = None) -> list[st
     i = 0
     while i < len(lines):
         if lines[i].startswith("1 ") and i + 1 < len(lines) and lines[i + 1].startswith("2 "):
-            name = fallback_name or f"CATNR {lines[i][2:7].strip()}"
+            catalog_id = validate_tle_pair(lines[i], lines[i + 1])
+            name = fallback_name or KNOWN_OBJECT_NAMES.get(catalog_id, f"CATNR {catalog_id}")
             blocks.append("\n".join([name, lines[i], lines[i + 1]]))
             i += 2
         elif i + 2 < len(lines) and lines[i + 1].startswith("1 ") and lines[i + 2].startswith("2 "):
+            validate_tle_pair(lines[i + 1], lines[i + 2])
             blocks.append("\n".join(lines[i : i + 3]))
             i += 3
         else:
@@ -175,6 +244,7 @@ def fetch_tle(catnr: str, retries: int = 3) -> str:
     blocks = normalize_tle_blocks(text, KNOWN_OBJECT_NAMES.get(catnr, f"CATNR {catnr}"))
     if len(blocks) != 1:
         raise ValueError(f"Expected one TLE for CATNR={catnr}, got {len(blocks)}")
+    validate_tle_pair(*blocks[0].splitlines()[1:], expected_catnr=catnr)
     return blocks[0]
 
 
@@ -191,7 +261,7 @@ def fetch_catnr_blocks(catnrs: list[str], request_delay: float = 1.5) -> tuple[l
             time.sleep(request_delay)
         try:
             blocks.append(fetch_tle(catnr))
-        except (CelesTrakHTTPError, ValueError) as exc:
+        except (CelesTrakHTTPError, TLETransportError, RuntimeError, ValueError) as exc:
             failures.append(catnr)
             print(f"WARN: failed to fetch CATNR={catnr}: {exc}")
     return blocks, failures
@@ -225,6 +295,7 @@ def fetch_tle_blocks(
     groups: list[str],
     max_objects: int | None = None,
     request_delay: float = 1.5,
+    min_success_ratio: float = 0.90,
 ) -> list[str]:
     blocks: list[str] = []
     failures: list[str] = []
@@ -240,6 +311,18 @@ def fetch_tle_blocks(
 
     if failures:
         print(f"WARN: {len(failures)} object(s) could not be fetched: {failures}")
+
+    requested_unique = len(set(catnrs))
+    if requested_unique:
+        received_for_requested = len(
+            {block.splitlines()[1][2:7].strip() for block in blocks} & set(catnrs)
+        )
+        success_ratio = received_for_requested / requested_unique
+        if success_ratio < min_success_ratio:
+            raise RuntimeError(
+                f"CATNR coverage {received_for_requested}/{requested_unique} ({success_ratio:.1%}) "
+                f"is below the required {min_success_ratio:.0%}; refusing partial snapshot"
+            )
 
     seen: set[str] = set()
     unique_blocks: list[str] = []
@@ -259,7 +342,54 @@ def write_tle_file(output: Path, blocks: list[str]) -> None:
     if not blocks:
         raise ValueError("No TLE blocks fetched.")
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text("\n".join(blocks) + "\n", encoding="utf-8")
+    for block in blocks:
+        lines = block.splitlines()
+        if len(lines) != 3:
+            raise ValueError("Every output block must contain name, line 1, and line 2")
+        validate_tle_pair(lines[1], lines[2])
+    handle, temporary_name = tempfile.mkstemp(prefix=f".{output.name}.", suffix=".tmp", dir=output.parent)
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8", newline="\n") as stream:
+            stream.write("\n".join(blocks) + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary_name, output)
+    except Exception:
+        try:
+            os.unlink(temporary_name)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def fetch_spacetrack_blocks(catnrs: list[str]) -> list[str]:
+    identity = os.getenv("SPACETRACK_IDENTITY")
+    password = os.getenv("SPACETRACK_PASSWORD")
+    if not identity or not password:
+        raise RuntimeError("Space-Track fallback requires SPACETRACK_IDENTITY and SPACETRACK_PASSWORD")
+    opener = build_opener(HTTPCookieProcessor())
+    login = Request(
+        SPACETRACK_LOGIN_URL,
+        data=urlencode({"identity": identity, "password": password}).encode("utf-8"),
+        headers={"User-Agent": "space-debris-iac-research/0.2"},
+    )
+    try:
+        with opener.open(login, timeout=30) as response:
+            response.read(MAX_RESPONSE_BYTES + 1)
+        query = SPACETRACK_GP_URL.format(catnrs=",".join(dict.fromkeys(catnrs)))
+        with opener.open(Request(query, headers={"User-Agent": "space-debris-iac-research/0.2"}), timeout=60) as response:
+            text = _read_response(response)
+    except HTTPError as exc:
+        raise RuntimeError(f"Space-Track HTTP {exc.code}: {exc.reason}") from exc
+    except (URLError, TimeoutError, ConnectionError, OSError) as exc:
+        raise TLETransportError(f"Space-Track transport failure: {exc}") from exc
+    blocks = normalize_tle_blocks(text)
+    returned = {block.splitlines()[1][2:7].strip() for block in blocks}
+    requested = set(catnrs)
+    ratio = len(returned & requested) / len(requested) if requested else 1.0
+    if ratio < 0.90:
+        raise RuntimeError(f"Space-Track CATNR coverage {ratio:.1%} is below required 90%")
+    return blocks
 
 
 def fetch_to_file(
@@ -268,9 +398,43 @@ def fetch_to_file(
     groups: list[str],
     max_objects: int | None = None,
     request_delay: float = 1.5,
+    *,
+    provider: str = "auto",
+    report: dict | None = None,
 ) -> Path:
-    blocks = fetch_tle_blocks(catnrs, groups, max_objects, request_delay=request_delay)
+    actual_provider = "celestrak"
+    if provider == "space-track":
+        if groups and not catnrs:
+            raise RuntimeError("Space-Track requires an explicit/preset CATNR catalog, not GROUP-only input")
+        blocks = fetch_spacetrack_blocks(catnrs)
+        if max_objects:
+            blocks = blocks[:max_objects]
+        actual_provider = "space-track"
+    else:
+        try:
+            blocks = fetch_tle_blocks(catnrs, groups, max_objects, request_delay=request_delay)
+        except (CelesTrakHTTPError, TLETransportError, RuntimeError, ValueError) as primary_error:
+            can_fallback = provider == "auto" and bool(
+                os.getenv("SPACETRACK_IDENTITY") and os.getenv("SPACETRACK_PASSWORD")
+            )
+            if not can_fallback:
+                raise
+            print(f"WARN: CelesTrak unavailable or invalid ({primary_error}); trying Space-Track GP API")
+            if groups and not catnrs:
+                raise RuntimeError("Space-Track fallback requires an explicit/preset CATNR catalog, not GROUP-only input")
+            blocks = fetch_spacetrack_blocks(catnrs)
+            if max_objects:
+                blocks = blocks[:max_objects]
+            actual_provider = "space-track"
     write_tle_file(output, blocks)
+    if report is not None:
+        report.update(
+            FetchReport(
+                provider=actual_provider,
+                catalog_ids=tuple(block.splitlines()[1][2:7].strip() for block in blocks),
+                requested_count=len(set(catnrs)),
+            ).__dict__
+        )
     return output
 
 
@@ -290,7 +454,7 @@ def main() -> None:
     output = Path(args.output or default_output)
     output.parent.mkdir(parents=True, exist_ok=True)
 
-    fetch_to_file(output, catnrs, groups, args.max_objects)
+    fetch_to_file(output, catnrs, groups, args.max_objects, provider=args.provider)
     print(f"OK -> {output}")
 
 

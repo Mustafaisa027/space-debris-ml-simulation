@@ -9,7 +9,7 @@ from space_debris.plots import create_publication_plots, plot_model_metrics
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train/evaluate models from accumulated observation history")
-    parser.add_argument("--history", default="outputs/history/conjunction_observations.csv")
+    parser.add_argument("--history", default="outputs/history/conjunction_observations_v2.csv")
     parser.add_argument("--report", default="outputs/history/model_comparison_time_split.csv")
     parser.add_argument(
         "--cv-splits",

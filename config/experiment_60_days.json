@@ -22,7 +22,7 @@
   "outputs": {
     "snapshots": "data/tle_snapshots",
     "runs": "outputs/runs",
-    "history": "outputs/history/conjunction_observations.csv",
+    "history": "outputs/history/conjunction_observations_v2.csv",
     "time_split_report": "outputs/history/model_comparison_time_split.csv"
   }
 }

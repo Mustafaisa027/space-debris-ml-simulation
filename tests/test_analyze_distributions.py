@@ -69,6 +69,7 @@ def test_calibrate_thresholds_finds_combination_within_target_range():
     assert calibration["within_target"] is True
     assert 0.02 <= calibration["achieved_positive_rate"] <= 0.15
     assert calibration["label_threshold_km"] > 0
+    assert calibration["label_threshold_km"] <= ad.DEFAULT_MAX_PHYSICAL_DISTANCE_KM
     assert calibration["label_relative_velocity_km_s"] > 0
     assert "rationale" in calibration and str(calibration["n_rows"]) in calibration["rationale"]
 
@@ -97,7 +98,23 @@ def test_calibrate_thresholds_handles_zero_achievable_positive_rate():
     calibration = ad.calibrate_thresholds(df, target_low=0.5, target_high=0.9)
 
     assert calibration["within_target"] is False
+    assert calibration["reliable"] is False
     assert calibration["achieved_positive_rate"] == pytest.approx(0.0)
+
+
+def test_calibration_never_inflates_distance_to_manufacture_positive_labels():
+    df = pd.DataFrame(
+        {
+            "min_distance_km": np.linspace(500.0, 5000.0, 1000),
+            "relative_velocity_km_s": np.linspace(1.0, 15.0, 1000),
+        }
+    )
+
+    calibration = ad.calibrate_thresholds(df)
+
+    assert calibration["label_threshold_km"] == ad.DEFAULT_MAX_PHYSICAL_DISTANCE_KM
+    assert calibration["achieved_positive_rate"] == 0.0
+    assert calibration["reliable"] is False
 
 
 def test_plot_distributions_writes_two_png_files(tmp_path):

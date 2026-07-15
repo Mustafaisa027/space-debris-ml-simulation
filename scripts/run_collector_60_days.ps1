@@ -5,4 +5,4 @@ Set-Location (Split-Path -Parent $PSScriptRoot)
   --days 60 `
   --interval-hours 2 `
   --max-objects 75 `
-  --history outputs\history\conjunction_observations.csv
+  --history outputs\history\conjunction_observations_v2.csv

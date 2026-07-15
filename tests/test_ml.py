@@ -62,10 +62,20 @@ def test_build_models_are_imbalance_aware():
     models = _build_models(scale_pos_weight=3.0)
 
     assert models["logistic_regression"].named_steps["logisticregression"].class_weight == "balanced"
+    assert models["decision_tree"].class_weight == "balanced"
     assert models["random_forest"].class_weight == "balanced"
     assert models["svm"].named_steps["svc"].class_weight == "balanced"
     if "xgboost" in models:
         assert models["xgboost"].get_params()["scale_pos_weight"] == 3.0
+    if "lightgbm" in models:
+        assert models["lightgbm"].get_params()["class_weight"] == "balanced"
+
+
+def test_adviser_model_set_contains_tree_and_primary_candidates():
+    models = _build_models(scale_pos_weight=3.0)
+
+    assert {"logistic_regression", "svm", "decision_tree", "random_forest"} <= set(models)
+    assert "xgboost" in models or "lightgbm" in models
 
 
 def test_ranking_metrics_matches_sklearn_directly():

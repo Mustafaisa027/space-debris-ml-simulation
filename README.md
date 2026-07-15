@@ -92,6 +92,24 @@ python src/collect_observations.py --days 60 --interval-hours 2
 python src/train_from_history.py
 ```
 
+If an older checkout already accumulated history, rebuild the schema-safe
+version from immutable run outputs before training:
+
+```bash
+python src/rebuild_history.py
+```
+
+TLE input is fail-closed: malformed/checksum-invalid responses and catalogue
+coverage below 90% are rejected, writes are atomic, and `--provider auto` can
+use authenticated Space-Track GP as a fallback when
+`SPACETRACK_IDENTITY`/`SPACETRACK_PASSWORD` are configured. CelesTrak remains
+the default and needs no credentials.
+
+For computer-independent, no-cloud-account collection, the repository includes
+a scheduled GitHub Actions workflow that commits immutable, hash-manifested
+bundles to a separate `data-collection` branch. Setup instructions are in
+[`docs/GITHUB_DATA_COLLECTION.md`](docs/GITHUB_DATA_COLLECTION.md).
+
 `train_from_history.py` uses a chronological split (train on earlier snapshots,
 test on later ones), which is the honest way to evaluate a forecasting-style
 classifier and avoids the optimism of a random split on correlated rows.
@@ -146,8 +164,9 @@ no-target-leakage guarantee on the ML feature set, and a propagation smoke test.
 src/space_debris/    maintained package (core, ml, plots)
 src/run_pipeline.py  one-shot pipeline
 src/make_demo_tles.py deterministic synthetic demo catalogue
-src/fetch_tles.py    CelesTrak TLE fetch
+src/fetch_tles.py    validated CelesTrak fetch + optional Space-Track fallback
 src/collect_observations.py  repeated-snapshot collector
+src/rebuild_history.py schema-safe history reconstruction
 src/train_from_history.py    time-split evaluation
 src/generate_plots.py        re-render plots from CSVs
 src/legacy/          original step1..step10 prototypes (reference only)

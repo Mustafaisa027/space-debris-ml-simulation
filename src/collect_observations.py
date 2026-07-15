@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
+import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,9 +28,15 @@ def parse_args() -> argparse.Namespace:
         help="curated multi-orbit CATNR catalog used when --catnr/--group are not given",
     )
     parser.add_argument("--max-objects", type=int, default=75, help="cap objects to control O(n^2) pair growth")
+    parser.add_argument(
+        "--provider",
+        choices=["auto", "celestrak", "space-track"],
+        default="auto",
+        help="TLE provider; auto permits credentialed Space-Track fallback",
+    )
     parser.add_argument("--snapshot-dir", default="data/tle_snapshots")
     parser.add_argument("--run-root", default="outputs/runs")
-    parser.add_argument("--history", default="outputs/history/conjunction_observations.csv")
+    parser.add_argument("--history", default="outputs/history/conjunction_observations_v2.csv")
     parser.add_argument("--horizon-minutes", type=int, default=720)
     parser.add_argument("--step-minutes", type=int, default=5)
     parser.add_argument("--leo-min-altitude-km", type=float, default=160.0)
@@ -60,7 +68,23 @@ def resolve_source(args: argparse.Namespace) -> tuple[list[str], list[str], str]
 
 def write_provenance(path: Path, provenance: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(provenance, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    handle, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as stream:
+            stream.write(json.dumps(provenance, indent=2, sort_keys=True) + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary_name, path)
+    except Exception:
+        try:
+            os.unlink(temporary_name)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+class HistorySchemaError(RuntimeError):
+    """Raised before mutation when accumulated-history columns are incompatible."""
 
 
 def append_csv(target: Path, source: Path, extra: dict[str, str]) -> int:
@@ -72,15 +96,45 @@ def append_csv(target: Path, source: Path, extra: dict[str, str]) -> int:
         non_comment_lines = (line for line in src if not line.startswith("#"))
         reader = csv.DictReader(non_comment_lines)
         fieldnames = list(extra.keys()) + list(reader.fieldnames or [])
-        write_header = not target.exists() or target.stat().st_size == 0
-        count = 0
-        with target.open("a", newline="", encoding="utf-8") as dst:
+        source_rows = list(reader)
+    if not source_rows:
+        raise HistorySchemaError(f"Source dataset has no rows: {source}")
+    if any(None in row for row in source_rows):
+        raise HistorySchemaError(f"Source dataset contains rows wider than its header: {source}")
+
+    existing_rows: list[dict] = []
+    if target.exists() and target.stat().st_size:
+        with target.open(newline="", encoding="utf-8") as current:
+            current_reader = csv.DictReader(current)
+            if list(current_reader.fieldnames or []) != fieldnames:
+                raise HistorySchemaError(
+                    "History schema mismatch; refusing to append. "
+                    f"expected={fieldnames}, existing={current_reader.fieldnames}"
+                )
+            existing_rows = list(current_reader)
+        if any(None in row for row in existing_rows):
+            raise HistorySchemaError(
+                f"Existing history contains malformed rows wider than its header: {target}"
+            )
+
+    handle, temporary_name = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=target.parent)
+    count = len(source_rows)
+    try:
+        with os.fdopen(handle, "w", newline="", encoding="utf-8") as dst:
             writer = csv.DictWriter(dst, fieldnames=fieldnames)
-            if write_header:
-                writer.writeheader()
-            for row in reader:
+            writer.writeheader()
+            writer.writerows(existing_rows)
+            for row in source_rows:
                 writer.writerow({**extra, **row})
-                count += 1
+            dst.flush()
+            os.fsync(dst.fileno())
+        os.replace(temporary_name, target)
+    except Exception:
+        try:
+            os.unlink(temporary_name)
+        except FileNotFoundError:
+            pass
+        raise
     return count
 
 
@@ -92,7 +146,15 @@ def collect_once(args: argparse.Namespace) -> int:
     run_dir.mkdir(parents=True, exist_ok=True)
 
     catnrs, groups, source = resolve_source(args)
-    fetch_to_file(snapshot_path, catnrs, groups, args.max_objects)
+    fetch_report: dict = {}
+    fetch_to_file(
+        snapshot_path,
+        catnrs,
+        groups,
+        args.max_objects,
+        provider=args.provider,
+        report=fetch_report,
+    )
     objects = read_tles(snapshot_path)
 
     provenance = {
@@ -103,6 +165,9 @@ def collect_once(args: argparse.Namespace) -> int:
         "object_count": len(objects),
         "tle_file": str(snapshot_path),
         "git_commit": git_commit_hash(),
+        "tle_provider": fetch_report.get("provider", "unknown"),
+        "catalog_ids": fetch_report.get("catalog_ids", []),
+        "requested_object_count": fetch_report.get("requested_count", len(catnrs)),
     }
     write_provenance(snapshot_path.with_suffix(".json"), provenance)
 
@@ -164,6 +229,8 @@ def main() -> None:
             # etc.) must not take down a 60-day scheduled task: log it and
             # pick back up on the next interval instead of crashing.
             print(f"{utc_stamp()}: collector error (continuing next cycle): {exc}")
+            if args.once:
+                raise
         if args.once or time.time() >= deadline:
             break
         time.sleep(interval_seconds)
