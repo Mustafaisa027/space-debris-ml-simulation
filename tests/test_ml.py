@@ -19,6 +19,9 @@ from space_debris.ml import (
     FEATURES,
     REPORT_COLUMNS,
     _build_models,
+    _canonical_pair_ids,
+    _pair_is_test,
+    _pair_grouped_time_split,
     _ranking_metrics,
     compare_models,
     compare_to_baseline_pr_auc,
@@ -54,6 +57,8 @@ def _synthetic_dataset(n: int, seed: int = 0) -> pd.DataFrame:
             "fixed_threshold_alarm": (min_distance <= 25.0).astype(int),
             "risk_label": labels,
             "snapshot_utc": pd.date_range("2026-01-01", periods=n, freq="h").astype(str),
+            "object_1": [f"OBJECT-{i:05d}" for i in range(n)],
+            "object_2": [f"TARGET-{i:05d}" for i in range(n)],
         }
     )
 
@@ -120,8 +125,148 @@ def test_compare_models_time_split_uses_chronological_order(tmp_path):
 
     report = compare_models(dataset_path, report_path, time_column="snapshot_utc")
 
-    assert (report["split"] == "time").all()
+    assert (report["split"] == "pair_grouped_time").all()
     assert report["pr_auc"].notna().any()
+    assert (report["excluded_rows"] > 0).all()
+
+
+def test_compare_models_quality_gate_rejects_single_class_grouped_partitions(tmp_path):
+    df = _synthetic_dataset(200, seed=24)
+    pair_ids = _canonical_pair_ids(df)
+    # The whole dataset has both classes, but SHA pair assignment makes the
+    # train partition all-negative and the held-out test all-positive.
+    df["risk_label"] = [int(_pair_is_test(pair, 0.25, "iac26-pair-split-v1")) for pair in pair_ids]
+    assert df["risk_label"].nunique() == 2
+    dataset_path = tmp_path / "dataset.csv"
+    df.to_csv(dataset_path, index=False)
+
+    report = compare_models(dataset_path, tmp_path / "report.csv", time_column="snapshot_utc")
+
+    assert report["model"].tolist() == ["not_enough_data"]
+    assert "must each contain both" in report.iloc[0]["note"]
+
+
+def test_canonical_pair_id_is_direction_independent():
+    df = pd.DataFrame({"object_1": ["A", "B"], "object_2": ["B", "A"]})
+
+    pair_ids = _canonical_pair_ids(df)
+
+    assert pair_ids.tolist() == ["A|B", "A|B"]
+
+
+def test_canonical_pair_prefers_catalog_ids_when_names_are_duplicated():
+    df = pd.DataFrame(
+        {
+            "object_1": ["IRIDIUM 33 DEB", "IRIDIUM 33 DEB"],
+            "object_2": ["TARGET", "TARGET"],
+            "object_1_catalog_id": ["33773", "33775"],
+            "object_2_catalog_id": ["99999", "99999"],
+        }
+    )
+
+    pair_ids = _canonical_pair_ids(df)
+
+    assert pair_ids.nunique() == 2
+    assert set(pair_ids) == {"33773|99999", "33775|99999"}
+
+
+def test_pair_grouped_time_split_has_no_pair_or_time_leakage():
+    df = _synthetic_dataset(80, seed=20)
+    # Repeat canonical pairs in both early and late source data. The splitter
+    # must keep each pair assignment stable while excluding cross-quadrant rows.
+    df.loc[40:, "object_1"] = df.loc[:39, "object_1"].to_numpy()
+    df.loc[40:, "object_2"] = df.loc[:39, "object_2"].to_numpy()
+
+    split = _pair_grouped_time_split(df, "snapshot_utc")
+    train_pairs = set(_canonical_pair_ids(split.train))
+    test_pairs = set(_canonical_pair_ids(split.test))
+    train_times = pd.to_datetime(split.train["snapshot_utc"], utc=True)
+    test_times = pd.to_datetime(split.test["snapshot_utc"], utc=True)
+
+    assert train_pairs.isdisjoint(test_pairs)
+    assert train_times.max() < test_times.min()
+    assert len(split.train) + len(split.test) + len(split.excluded) == len(df)
+    assert split.metadata["excluded_rows"] == len(split.excluded)
+
+
+def test_pair_grouped_time_split_is_stable_when_input_rows_are_shuffled():
+    df = _synthetic_dataset(120, seed=21).assign(source_row_id=np.arange(120))
+    first = _pair_grouped_time_split(df, "snapshot_utc")
+    shuffled = df.sample(frac=1.0, random_state=99)
+    second = _pair_grouped_time_split(shuffled, "snapshot_utc")
+
+    assert set(first.train["source_row_id"]) == set(second.train["source_row_id"])
+    assert set(first.test["source_row_id"]) == set(second.test["source_row_id"])
+    assert set(first.excluded["source_row_id"]) == set(second.excluded["source_row_id"])
+    assert first.metadata["cutoff_utc"] == second.metadata["cutoff_utc"]
+
+
+def test_sha_pair_assignment_is_stable_when_new_pairs_are_added():
+    existing = ["A|B", "C|D", "E|F"]
+    before = {pair: _pair_is_test(pair, 0.25, "fixed-seed") for pair in existing}
+
+    after = {
+        pair: _pair_is_test(pair, 0.25, "fixed-seed")
+        for pair in existing + ["NEW|PAIR"]
+    }
+
+    assert {pair: after[pair] for pair in existing} == before
+
+
+def test_pair_grouped_time_split_keeps_cutoff_snapshot_out_of_train():
+    df = _synthetic_dataset(40, seed=22)
+    # Four rows per complete snapshot block.
+    df["snapshot_utc"] = np.repeat(pd.date_range("2026-01-01", periods=10, freq="h").astype(str), 4)
+
+    split = _pair_grouped_time_split(df, "snapshot_utc")
+    cutoff = pd.Timestamp(split.metadata["cutoff_utc"])
+    train_times = pd.to_datetime(split.train["snapshot_utc"], utc=True)
+    test_times = pd.to_datetime(split.test["snapshot_utc"], utc=True)
+
+    assert (train_times < cutoff).all()
+    assert (test_times >= cutoff).all()
+    assert cutoff not in set(train_times)
+
+
+def test_pair_grouped_time_split_rejects_missing_time_column():
+    df = _synthetic_dataset(20).drop(columns=["snapshot_utc"])
+
+    with pytest.raises(ValueError, match="not found"):
+        _pair_grouped_time_split(df, "snapshot_utc")
+
+
+@pytest.mark.parametrize("bad_value", [None, ""])
+def test_pair_grouped_time_split_rejects_missing_or_empty_pair_identity(bad_value):
+    df = _synthetic_dataset(20)
+    df.loc[0, "object_1"] = bad_value
+
+    with pytest.raises(ValueError, match="Pair identity"):
+        _pair_grouped_time_split(df, "snapshot_utc")
+
+
+def test_pair_grouped_time_split_rejects_invalid_timestamp():
+    df = _synthetic_dataset(20)
+    df.loc[0, "snapshot_utc"] = "not-a-timestamp"
+
+    with pytest.raises(ValueError):
+        _pair_grouped_time_split(df, "snapshot_utc")
+
+
+def test_fixed_threshold_predictions_use_the_actual_grouped_test_rows(tmp_path):
+    df = _synthetic_dataset(200, seed=23).sample(frac=1.0, random_state=17)
+    # Make baseline values deliberately independent of row order so an index
+    # reset/alignment bug is observable.
+    df["fixed_threshold_alarm"] = (np.arange(len(df)) % 3 == 0).astype(int)
+    dataset_path = tmp_path / "shuffled.csv"
+    df.to_csv(dataset_path, index=False)
+
+    round_tripped = pd.read_csv(dataset_path)
+    split = _pair_grouped_time_split(round_tripped, "snapshot_utc")
+    predictions = model_predictions_for_plotting(dataset_path, time_column="snapshot_utc")
+
+    assert predictions["fixed_threshold"]["pred"].tolist() == split.test[
+        "fixed_threshold_alarm"
+    ].astype(int).tolist()
 
 
 def test_compare_to_baseline_pr_auc_reports_deltas():
@@ -156,7 +301,11 @@ def test_time_series_cv_report_aggregates_mean_and_std(tmp_path):
     pr_auc_rows = report[(report["model"] == "random_forest") & (report["metric"] == "pr_auc")]
     assert len(pr_auc_rows) == 1
     row = pr_auc_rows.iloc[0]
-    assert row["folds"] == 3
+    # ``folds`` counts only folds where this metric is defined; pair/time
+    # holdout can legitimately leave a fold with a single test class.
+    assert 1 <= row["folds"] <= 3
+    assert row["total_folds"] == 3
+    assert row["valid_partitions"] == 3
     assert row["mean"] is not None
     assert row["std"] is not None
     assert report_path.exists()

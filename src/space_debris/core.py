@@ -14,6 +14,11 @@ import numpy as np
 from scipy.optimize import minimize_scalar
 from skyfield.api import EarthSatellite, load
 
+from space_debris.encounters import (
+    MAX_BOUND_RELATIVE_SPEED_KM_S,
+    SCREENING_NUMERICAL_GUARD_KM,
+    conservative_candidate_screen,
+)
 from space_debris.provenance import write_csv_text_with_provenance
 
 EARTH_RADIUS_KM = 6378.137
@@ -74,6 +79,8 @@ class PairResult:
     # actual start or end. Internal coarse-interval edges are not flagged:
     # both adjacent intervals are searched, so they are not search boundaries.
     tca_boundary_flag: int = 0
+    object_1_catalog_id: str = ""
+    object_2_catalog_id: str = ""
 
 
 def read_tles(path: Path) -> list[TleObject]:
@@ -386,6 +393,9 @@ def simulate_pairs(
     label_threshold_km: float,
     label_relative_velocity_km_s: float = 10.0,
     max_tle_age_hours: float = 336.0,
+    candidate_screening_threshold_km: float | None = None,
+    screening_step_seconds: float | None = None,
+    screening_report: dict | None = None,
 ) -> list[PairResult]:
     """Propagate every LEO pair and score its closest approach.
 
@@ -402,6 +412,11 @@ def simulate_pairs(
     ts = load.timescale()
     start_utc = start_utc.astimezone(timezone.utc).replace(microsecond=0)
     results: list[PairResult] = []
+    screening_step_s = screening_step_seconds or step_minutes * 60.0
+    offsets_s = _coarse_offsets_seconds(horizon_minutes * 60.0, screening_step_s)
+    coarse_times = ts.from_datetimes(
+        [start_utc + timedelta(seconds=offset_s) for offset_s in offsets_s]
+    )
 
     stale = [
         f"{sat.name} ({_tle_age_hours(sat, start_utc) / 24.0:.1f} d)"
@@ -417,18 +432,50 @@ def simulate_pairs(
             stacklevel=2,
         )
 
-    for sat1, sat2 in combinations(satellites, 2):
-        start_t = _to_skyfield_time(ts, start_utc)
-        geocentric_1_start = sat1.at(start_t)
-        geocentric_2_start = sat2.at(start_t)
-        p1_start = geocentric_1_start.position.km
-        p2_start = geocentric_2_start.position.km
-        alt1 = _altitude_km(p1_start)
-        alt2 = _altitude_km(p2_start)
-        if not (leo_min_altitude_km <= alt1 <= leo_max_altitude_km):
-            continue
-        if not (leo_min_altitude_km <= alt2 <= leo_max_altitude_km):
-            continue
+    valid: list[tuple[EarthSatellite, object, np.ndarray, float]] = []
+    for sat in satellites:
+        propagated = sat.at(coarse_times)
+        positions = np.asarray(propagated.position.km).T
+        start_state = sat.at(coarse_times[0])
+        start_position = np.asarray(start_state.position.km)
+        altitude = _altitude_km(start_position)
+        if leo_min_altitude_km <= altitude <= leo_max_altitude_km:
+            valid.append((sat, start_state, positions, altitude))
+
+    total_pairs = len(valid) * (len(valid) - 1) // 2
+    screened_pairs = 0
+    refined_pairs = 0
+
+    for item1, item2 in combinations(valid, 2):
+        sat1, geocentric_1_start, positions1, alt1 = item1
+        sat2, geocentric_2_start, positions2, alt2 = item2
+        p1_start = positions1[0]
+        p2_start = positions2[0]
+
+        # The universal escape-speed screening bound assumes bound Earth
+        # orbits whose perigees remain outside Earth. If either TLE violates
+        # that assumption (or propagation is non-finite), fail open and run
+        # the exact refinement instead of risking a false negative.
+        model1, model2 = sat1.model, sat2.model
+        screening_assumptions_hold = (
+            0.0 <= float(model1.ecco) < 1.0
+            and 0.0 <= float(model2.ecco) < 1.0
+            and float(model1.altp) >= 0.0
+            and float(model2.altp) >= 0.0
+            and np.isfinite(positions1).all()
+            and np.isfinite(positions2).all()
+        )
+        if candidate_screening_threshold_km is not None and screening_assumptions_hold:
+            coarse_distances = np.linalg.norm(positions1 - positions2, axis=1)
+            decision = conservative_candidate_screen(
+                offsets_s,
+                coarse_distances,
+                candidate_screening_threshold_km,
+            )
+            if not decision.is_candidate:
+                screened_pairs += 1
+                continue
+        refined_pairs += 1
 
         current_distance = _distance_km(p1_start, p2_start)
         # Evaluate every coarse sample and refine every adjacent interval;
@@ -495,9 +542,23 @@ def simulate_pairs(
                 fixed_threshold_alarm=int(best_distance <= fixed_threshold_km),
                 risk_label=risk_label,
                 tca_boundary_flag=int(tca_boundary_flag),
+                object_1_catalog_id=str(sat1.model.satnum),
+                object_2_catalog_id=str(sat2.model.satnum),
             )
         )
 
+    if screening_report is not None:
+        screening_report.update(
+            enabled=candidate_screening_threshold_km is not None,
+            threshold_km=candidate_screening_threshold_km,
+            screening_step_seconds=screening_step_s,
+            relative_speed_bound_km_s=MAX_BOUND_RELATIVE_SPEED_KM_S,
+            numerical_guard_km=SCREENING_NUMERICAL_GUARD_KM,
+            valid_objects=len(valid),
+            total_pairs=total_pairs,
+            screened_pairs=screened_pairs,
+            refined_pairs=refined_pairs,
+        )
     return sorted(results, key=lambda row: row.risk_score, reverse=True)
 
 
@@ -540,6 +601,8 @@ def write_pair_results(
                 "fixed_threshold_alarm": row.fixed_threshold_alarm,
                 "risk_label": row.risk_label,
                 "tca_boundary_flag": row.tca_boundary_flag,
+                "object_1_catalog_id": row.object_1_catalog_id,
+                "object_2_catalog_id": row.object_2_catalog_id,
             }
         )
 

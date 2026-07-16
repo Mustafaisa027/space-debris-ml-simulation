@@ -246,7 +246,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Analyze accumulated conjunction history and suggest physically-defensible label thresholds"
     )
-    parser.add_argument("--history", default="outputs/history/conjunction_observations_v2.csv")
+    parser.add_argument("--history", default="outputs/history/conjunction_observations_v3.csv")
     parser.add_argument("--output", default="config/threshold_calibration.json")
     parser.add_argument("--plots-dir", default="outputs/history")
     parser.add_argument("--target-positive-rate-low", type=float, default=0.02)

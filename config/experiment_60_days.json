@@ -1,28 +1,39 @@
 {
   "duration_days": 60,
   "poll_interval_hours": 2,
-  "source": "CelesTrak GP API",
+  "provider": "auto",
+  "source": "CelesTrak GP API with credentialed Space-Track fallback",
   "note": "Thresholds are in km and are physically interpretable conjunction-screening scales, not the earlier 3000-10000 km placeholders.",
   "default_query": {
-    "catnr": ["25544", "25338", "20580", "25994", "27424"],
-    "groups": [],
+    "preset": "leo_mixed",
     "max_objects": 75
   },
   "simulation": {
     "leo_min_altitude_km": 160,
     "leo_max_altitude_km": 2000,
     "horizon_minutes": 720,
-    "step_minutes": 3,
+    "step_minutes": 5,
+    "screening_step_seconds": 30,
     "candidate_threshold_km": 200,
     "fixed_threshold_km": 25,
     "label_threshold_km": 50,
     "label_relative_velocity_km_s": 10,
     "max_tle_age_hours": 336
   },
+  "evaluation": {
+    "time_column": "snapshot_utc",
+    "train_time_fraction": 0.75,
+    "test_pair_fraction": 0.25,
+    "pair_seed": "iac26-pair-split-v1"
+  },
   "outputs": {
     "snapshots": "data/tle_snapshots",
     "runs": "outputs/runs",
-    "history": "outputs/history/conjunction_observations_v2.csv",
-    "time_split_report": "outputs/history/model_comparison_time_split.csv"
+    "history": "outputs/history/conjunction_observations_v3.csv",
+    "history_rebuild_report": "outputs/history/history_rebuild_report_v3.json",
+    "resimulated_runs": "outputs/resimulated_runs_v3",
+    "resimulated_history": "outputs/history/conjunction_observations_resimulated_v3.csv",
+    "resimulation_report": "outputs/history/resimulation_report_v3.json",
+    "time_split_report": "outputs/history/model_comparison_pair_grouped_time_split.csv"
   }
 }

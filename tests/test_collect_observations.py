@@ -119,6 +119,7 @@ def test_collect_once_writes_provenance_sidecar(monkeypatch, tmp_path):
         history=str(tmp_path / "history" / "conjunction_observations.csv"),
         horizon_minutes=30,
         step_minutes=10,
+        screening_step_seconds=30.0,
         leo_min_altitude_km=160.0,
         leo_max_altitude_km=2000.0,
         candidate_threshold_km=5000.0,
@@ -142,6 +143,9 @@ def test_collect_once_writes_provenance_sidecar(monkeypatch, tmp_path):
     assert "git_commit" in provenance
     assert provenance["tle_provider"] == "test"
     assert provenance["requested_object_count"] == 6
+    assert provenance["simulation"]["fixed_threshold_km"] == 25.0
+    assert provenance["simulation"]["label_threshold_km"] == 200.0
+    assert provenance["simulation"]["screening_step_seconds"] == 30.0
 
     history_path = tmp_path / "history" / "conjunction_observations.csv"
     assert history_path.exists()
@@ -151,6 +155,13 @@ def test_collect_once_writes_provenance_sidecar(monkeypatch, tmp_path):
     # (ROADMAP_YOL1.md GOREV 6); append_csv must not have leaked a literal
     # '#' comment line into the accumulated history CSV.
     assert not header.startswith("#")
+    # ML history contains only exact conjunction candidates. The immutable
+    # per-run conjunction_dataset.csv retains every conservative-screen pair
+    # that proceeded to exact TCA; rejected-pair counts live in provenance.
+    with history_path.open(newline="", encoding="utf-8") as stream:
+        history_rows = list(csv.DictReader(stream))
+    assert history_rows
+    assert all(float(row["min_distance_km"]) <= args.candidate_threshold_km for row in history_rows)
 
 
 def test_append_csv_skips_provenance_header_lines_in_source(tmp_path):
@@ -175,6 +186,21 @@ def test_append_csv_skips_provenance_header_lines_in_source(tmp_path):
     assert not any(line.startswith("#") for line in lines)
     assert lines[1] == "run1,SAT-A,SAT-B,12.5"
     assert lines[2] == "run1,SAT-C,SAT-D,88.0"
+
+
+def test_append_csv_accepts_header_only_candidate_set(tmp_path):
+    source_path = tmp_path / "identified_conjunctions.csv"
+    source_path.write_text("object_1,object_2,min_distance_km\n", encoding="utf-8")
+    target_path = tmp_path / "history.csv"
+
+    count = collect_observations.append_csv(
+        target_path, source_path, {"collection_id": "empty-run"}
+    )
+
+    assert count == 0
+    assert target_path.read_text(encoding="utf-8").splitlines() == [
+        "collection_id,object_1,object_2,min_distance_km"
+    ]
 
 
 def test_append_csv_rejects_schema_drift_without_modifying_history(tmp_path):

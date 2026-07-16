@@ -58,13 +58,35 @@ metadata. This lets any table or figure in the paper be traced back to the
 exact code version and configuration that produced it.
 
 **Schema versioning.** The current accumulated file is
-`conjunction_observations_v2.csv`. `src/rebuild_history.py` reconstructs it
-from immutable per-run datasets and includes only the current 24-column pair
+`conjunction_observations_v3.csv`. `src/rebuild_history.py` reconstructs it
+from immutable per-run datasets and includes only the current 27-column pair
 schema; legacy schemas are preserved as raw runs and listed in
 `history_rebuild_report.json`, never silently coerced into shifted columns.
 Historical rows involving station-attached/docked modules and vehicles are
 also excluded and counted in that report; their near-zero separation from the
 parent station is not an independent conjunction.
+
+**Conservative candidate screening.** Exact all-interval TCA refinement is
+performed only after a lossless-under-assumptions coarse screen. For relative
+distance `d(t)` and a valid relative-speed bound `V`, the Lipschitz inequality
+implies that an encounter inside an interval of duration `dt` must have at
+least one endpoint within `candidate_threshold_km + V*dt/2`. The implementation
+uses twice Earth-surface escape speed (about 22.36 km/s) plus a 1 km numerical
+guard, includes the exact horizon remainder, and retains equality. Screening
+uses a separate, vectorized 30 second grid while exact TCA refinement retains
+the five-minute interval partition; at 200 km the universal screening cutoff
+is therefore about 536 km. TLEs that do not satisfy the bound-Earth-orbit/perigee assumptions,
+or produce non-finite samples, fail open to exact refinement. This screen
+reduces cost; it never substitutes its coarse distance for the reported TCA.
+
+**Historical resimulation.** `src/resimulate_snapshots.py` replays immutable
+TLE snapshots at their original `fetched_utc` with the current experiment
+config (including its deterministic `max_objects` cap) and corrected TCA
+implementation. Each run is written to a temporary
+directory and atomically published with input SHA-256, source provenance,
+code commit, screening counts and exact-candidate counts. Completed matching
+hashes are skipped, allowing interruption-safe continuation. Original run
+artifacts are never overwritten.
 
 ## 2. Label Definition
 
@@ -161,14 +183,17 @@ always predicting "not risky."
 
 **Splits.**
 
-- `compare_models()` uses a single chronological 75/25 split when a time
-  column is available (earlier snapshots train, later ones test) — the
-  honest way to evaluate a forecasting-style classifier, avoiding the
-  optimism of a random split on correlated rows.
-- `time_series_cv_report()` offers k-fold `TimeSeriesSplit` cross-validation
-  as an **additional option**, reporting mean +/- std per model/metric. More
-  folds give a less noisy read of stability, at the cost of smaller/earlier
-  training folds.
+- `compare_models()` assigns canonical NORAD-catalog pairs (`A|B == B|A`) to stable
+  train/test groups with a salted SHA-256 mapping. A cutoff is placed only
+  between complete snapshot blocks. Training is `train pair + past`; testing
+  is `held-out pair + future`; the other two quadrants are excluded and
+  counted. This guarantees pair disjointness and strict time ordering.
+  Human-readable names remain reporting labels; catalogue IDs prevent many
+  debris fragments sharing one display name from collapsing into one pair.
+- `time_series_cv_report()` applies the same fixed pair assignment in
+  expanding, whole-snapshot time folds and reports mean +/- std together with
+  total and metrically valid fold counts. A single-class test fold cannot
+  contribute PR-AUC/ROC-AUC and is never used to claim model superiority.
 
 **Metrics.** PR-AUC (`average_precision_score`) and ROC-AUC lead every
 report; accuracy is retained for context but is **not** the headline metric.
@@ -202,6 +227,12 @@ single operating point is varied — illustrating that the chosen
 
 ## 7. Limitations
 
+- **The present proxy task is rule recovery, not physical collision
+  prediction.** `risk_label` is deterministically constructed from miss
+  distance and relative velocity, and those physical quantities are available
+  to the classifiers. Results therefore measure whether models reproduce this
+  transparent screening rule better than a distance-only baseline; they do not
+  establish real-world collision probability or causal predictive skill.
 - **`risk_label` is a proxy, not a validated ground truth.** No public-TLE
   source provides confirmed historical close-approach outcomes at this
   granularity; the label is a physically-motivated geometric/kinematic rule,

@@ -11,6 +11,7 @@ from pathlib import Path
 
 from fetch_tles import PRESETS, fetch_to_file
 from space_debris.core import build_satellites, filter_conjunctions, read_tles, simulate_pairs, write_pair_results
+from space_debris.experiment import DEFAULT_EXPERIMENT_CONFIG, load_experiment_config
 from space_debris.provenance import git_commit_hash
 
 
@@ -19,41 +20,50 @@ ADDITIVE_HISTORY_DEFAULTS = {
     # means "not recorded"; treating them as 0 would incorrectly assert that
     # the old coarse-only result was checked and found away from a boundary.
     "tca_boundary_flag": "",
+    "object_1_catalog_id": "",
+    "object_2_catalog_id": "",
 }
 
 
 def parse_args() -> argparse.Namespace:
+    config_parser = argparse.ArgumentParser(add_help=False)
+    config_parser.add_argument("--config", default=str(DEFAULT_EXPERIMENT_CONFIG))
+    config_args, _ = config_parser.parse_known_args()
+    config = load_experiment_config(config_args.config)
+
     parser = argparse.ArgumentParser(description="Collect repeated TLE snapshots and conjunction observations")
-    parser.add_argument("--days", type=float, default=60.0, help="collection duration")
-    parser.add_argument("--interval-hours", type=float, default=2.0, help="CelesTrak recommends not polling more often")
+    parser.add_argument("--config", default=str(config.path), help="authoritative experiment JSON")
+    parser.add_argument("--days", type=float, default=config.duration_days, help="collection duration")
+    parser.add_argument("--interval-hours", type=float, default=config.poll_interval_hours, help="CelesTrak recommends not polling more often")
     parser.add_argument("--once", action="store_true", help="run one fetch/simulate cycle and exit")
     parser.add_argument("--catnr", nargs="*", default=None, help="NORAD catalog numbers (overrides --preset)")
     parser.add_argument("--group", nargs="*", default=None, help="CelesTrak groups, e.g. STATIONS WEATHER (overrides --preset)")
     parser.add_argument(
         "--preset",
         choices=sorted(PRESETS),
-        default="leo_mixed",
+        default=config.preset,
         help="curated multi-orbit CATNR catalog used when --catnr/--group are not given",
     )
-    parser.add_argument("--max-objects", type=int, default=75, help="cap objects to control O(n^2) pair growth")
+    parser.add_argument("--max-objects", type=int, default=config.max_objects, help="cap objects to control O(n^2) pair growth")
     parser.add_argument(
         "--provider",
         choices=["auto", "celestrak", "space-track"],
-        default="auto",
+        default=config.provider,
         help="TLE provider; auto permits credentialed Space-Track fallback",
     )
-    parser.add_argument("--snapshot-dir", default="data/tle_snapshots")
-    parser.add_argument("--run-root", default="outputs/runs")
-    parser.add_argument("--history", default="outputs/history/conjunction_observations_v2.csv")
-    parser.add_argument("--horizon-minutes", type=int, default=720)
-    parser.add_argument("--step-minutes", type=int, default=5)
-    parser.add_argument("--leo-min-altitude-km", type=float, default=160.0)
-    parser.add_argument("--leo-max-altitude-km", type=float, default=2000.0)
-    parser.add_argument("--candidate-threshold-km", type=float, default=50.0)
-    parser.add_argument("--fixed-threshold-km", type=float, default=25.0)
-    parser.add_argument("--label-threshold-km", type=float, default=20.0)
-    parser.add_argument("--label-relative-velocity-km-s", type=float, default=10.0)
-    parser.add_argument("--max-tle-age-hours", type=float, default=336.0)
+    parser.add_argument("--snapshot-dir", default=config.snapshot_dir)
+    parser.add_argument("--run-root", default=config.run_root)
+    parser.add_argument("--history", default=config.history)
+    parser.add_argument("--horizon-minutes", type=int, default=config.horizon_minutes)
+    parser.add_argument("--step-minutes", type=int, default=config.step_minutes)
+    parser.add_argument("--screening-step-seconds", type=float, default=config.screening_step_seconds)
+    parser.add_argument("--leo-min-altitude-km", type=float, default=config.leo_min_altitude_km)
+    parser.add_argument("--leo-max-altitude-km", type=float, default=config.leo_max_altitude_km)
+    parser.add_argument("--candidate-threshold-km", type=float, default=config.candidate_threshold_km)
+    parser.add_argument("--fixed-threshold-km", type=float, default=config.fixed_threshold_km)
+    parser.add_argument("--label-threshold-km", type=float, default=config.label_threshold_km)
+    parser.add_argument("--label-relative-velocity-km-s", type=float, default=config.label_relative_velocity_km_s)
+    parser.add_argument("--max-tle-age-hours", type=float, default=config.max_tle_age_hours)
     return parser.parse_args()
 
 
@@ -103,10 +113,10 @@ def append_csv(target: Path, source: Path, extra: dict[str, str]) -> int:
         # mistake for the fieldnames row.
         non_comment_lines = (line for line in src if not line.startswith("#"))
         reader = csv.DictReader(non_comment_lines)
-        fieldnames = list(extra.keys()) + list(reader.fieldnames or [])
+        if not reader.fieldnames:
+            raise HistorySchemaError(f"Source dataset has no header: {source}")
+        fieldnames = list(extra.keys()) + list(reader.fieldnames)
         source_rows = list(reader)
-    if not source_rows:
-        raise HistorySchemaError(f"Source dataset has no rows: {source}")
     if any(None in row for row in source_rows):
         raise HistorySchemaError(f"Source dataset contains rows wider than its header: {source}")
 
@@ -187,10 +197,22 @@ def collect_once(args: argparse.Namespace) -> int:
         "tle_provider": fetch_report.get("provider", "unknown"),
         "catalog_ids": fetch_report.get("catalog_ids", []),
         "requested_object_count": fetch_report.get("requested_count", len(catnrs)),
+        "experiment_config": getattr(args, "config", ""),
+        "simulation": {
+            "horizon_minutes": args.horizon_minutes,
+            "step_minutes": args.step_minutes,
+            "screening_step_seconds": args.screening_step_seconds,
+            "candidate_threshold_km": args.candidate_threshold_km,
+            "fixed_threshold_km": args.fixed_threshold_km,
+            "label_threshold_km": args.label_threshold_km,
+            "label_relative_velocity_km_s": args.label_relative_velocity_km_s,
+            "max_tle_age_hours": args.max_tle_age_hours,
+            "leo_min_altitude_km": args.leo_min_altitude_km,
+            "leo_max_altitude_km": args.leo_max_altitude_km,
+        },
     }
-    write_provenance(snapshot_path.with_suffix(".json"), provenance)
-
     satellites = build_satellites(objects)
+    screening_report: dict = {}
     rows = simulate_pairs(
         satellites=satellites,
         start_utc=snapshot_utc,
@@ -202,14 +224,24 @@ def collect_once(args: argparse.Namespace) -> int:
         label_threshold_km=args.label_threshold_km,
         label_relative_velocity_km_s=args.label_relative_velocity_km_s,
         max_tle_age_hours=args.max_tle_age_hours,
+        candidate_screening_threshold_km=args.candidate_threshold_km,
+        screening_step_seconds=args.screening_step_seconds,
+        screening_report=screening_report,
     )
     conjunctions = filter_conjunctions(rows, args.candidate_threshold_km)
+    screening_report["exact_candidates"] = len(conjunctions)
+    provenance["screening"] = screening_report
+    write_provenance(snapshot_path.with_suffix(".json"), provenance)
 
     config_summary = (
         f"horizon={args.horizon_minutes}min step={args.step_minutes}min "
+        f"screening_step={args.screening_step_seconds}s "
         f"label_threshold_km={args.label_threshold_km} "
         f"label_relative_velocity_km_s={args.label_relative_velocity_km_s} "
-        f"candidate_threshold_km={args.candidate_threshold_km}"
+        f"candidate_threshold_km={args.candidate_threshold_km} "
+        f"fixed_threshold_km={args.fixed_threshold_km} "
+        f"leo_altitude_km=[{args.leo_min_altitude_km},{args.leo_max_altitude_km}] "
+        f"experiment_config={getattr(args, 'config', '')}"
     )
     dataset_path = run_dir / "conjunction_dataset.csv"
     conjunction_path = run_dir / "identified_conjunctions.csv"
@@ -218,7 +250,7 @@ def collect_once(args: argparse.Namespace) -> int:
 
     count = append_csv(
         Path(args.history),
-        dataset_path,
+        conjunction_path,
         {
             "collection_id": stamp,
             "source": provenance["source"],

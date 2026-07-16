@@ -11,7 +11,7 @@ Each workflow execution gets an immutable directory:
 
 ```text
 collections/github-run-RUN_ID-attempt-ATTEMPT/
-  history/conjunction_observations_v2.csv
+  history/conjunction_observations_v3.csv
   runs/TIMESTAMP/conjunction_dataset.csv
   runs/TIMESTAMP/identified_conjunctions.csv
   tle/tles_TIMESTAMP.txt

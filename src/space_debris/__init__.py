@@ -1,3 +1,3 @@
 """Space debris conjunction simulation package."""
 
-__all__ = ["core", "ml", "plots"]
+__all__ = ["core", "encounters", "experiment", "ml", "plots"]

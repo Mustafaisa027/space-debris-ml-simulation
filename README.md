@@ -88,7 +88,7 @@ python src/collect_observations.py --once
 # 60-day background collection (see scripts/ for Windows Task Scheduler helpers)
 python src/collect_observations.py --days 60 --interval-hours 2
 
-# time-ordered train/test evaluation over the accumulated history
+# pair-held-out, time-ordered evaluation over the clean v3 history
 python src/train_from_history.py
 ```
 
@@ -97,6 +97,9 @@ version from immutable run outputs before training:
 
 ```bash
 python src/rebuild_history.py
+
+# after a TCA algorithm change, re-run immutable snapshots with one config
+python src/resimulate_snapshots.py --config config/experiment_60_days.json
 ```
 
 TLE input is fail-closed: malformed/checksum-invalid responses and catalogue
@@ -110,16 +113,33 @@ a scheduled GitHub Actions workflow that commits immutable, hash-manifested
 bundles to a separate `data-collection` branch. Setup instructions are in
 [`docs/GITHUB_DATA_COLLECTION.md`](docs/GITHUB_DATA_COLLECTION.md).
 
-`train_from_history.py` uses a chronological split (train on earlier snapshots,
-test on later ones), which is the honest way to evaluate a forecasting-style
-classifier and avoids the optimism of a random split on correlated rows.
+`config/experiment_60_days.json` is the authoritative source for collection,
+simulation thresholds, v3 history, and report paths. CLI flags can override it
+for explicit one-off experiments, and those values are recorded in provenance.
+
+`train_from_history.py` assigns canonical object pairs deterministically with
+SHA-256, then trains only on train-pair observations before a complete snapshot
+cutoff and tests only on held-out-pair observations after it. Cross-quadrant
+rows are excluded and counted. This simultaneously prevents future leakage,
+pair memorization, and splitting one snapshot block across train and test.
+
+Before exact TCA refinement, the maintained pipeline applies a conservative
+coarse screen from `space_debris.encounters`. On a separate vectorized 30-second grid,
+the screen uses twice Earth-surface escape speed (about 22.36 km/s relative),
+a one-kilometre numerical guard, and the actual final interval duration. Exact
+TCA refinement still searches every five-minute interval. A pair
+is rejected only when a 200 km encounter is impossible under this stated bound;
+invalid/unbound TLE assumptions fail open to exact refinement. Screening
+statistics are stored in every collection/resimulation provenance record.
 
 ## Outputs
 
 Written to `outputs/pipeline/` (or the `--outputs` directory):
 
-- `conjunction_dataset.csv` — every simulated pair
-- `identified_conjunctions.csv` — screened candidates (ML trains on these)
+- `conjunction_dataset.csv` — every conservative-screen-retained pair after
+  exact TCA refinement (screened-out count remains in provenance)
+- `identified_conjunctions.csv` — exact candidates within the configured
+  distance threshold (ML history uses only these)
 - `model_comparison.csv` — precision/recall/F1/accuracy per model
 - `top_pair_distance_timeseries.csv`, `top_pair_distance.png`
 - `risk_feature_space.png`, `tca_distance_scatter.png`,
@@ -167,7 +187,8 @@ src/make_demo_tles.py deterministic synthetic demo catalogue
 src/fetch_tles.py    validated CelesTrak fetch + optional Space-Track fallback
 src/collect_observations.py  repeated-snapshot collector
 src/rebuild_history.py schema-safe history reconstruction
-src/train_from_history.py    time-split evaluation
+src/resimulate_snapshots.py corrected-TCA historical resimulation
+src/train_from_history.py    pair-held-out chronological evaluation
 src/generate_plots.py        re-render plots from CSVs
 src/legacy/          original step1..step10 prototypes (reference only)
 tests/               unit tests

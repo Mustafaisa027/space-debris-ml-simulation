@@ -18,7 +18,12 @@ from sklearn.metrics import (
 )
 from skyfield.api import load
 
-from space_debris.ml import FEATURES, model_predictions_for_plotting
+from space_debris.ml import (
+    FEATURES,
+    InsufficientGroupedSplitError,
+    _split_data,
+    model_predictions_for_plotting,
+)
 from space_debris.provenance import png_provenance_metadata
 
 EARTH_RADIUS_KM = 6378.137
@@ -542,8 +547,12 @@ def create_pipeline_plots(
 # time_series_cv_report() remain the source of truth for the numeric report.
 
 
-def plot_pr_curves(dataset_path: Path, output_path: Path, time_column: str | None = None) -> None:
-    predictions = model_predictions_for_plotting(dataset_path, time_column=time_column)
+def plot_pr_curves(
+    dataset_path: Path, output_path: Path, time_column: str | None = None, **split_kwargs
+) -> None:
+    predictions = model_predictions_for_plotting(
+        dataset_path, time_column=time_column, **split_kwargs
+    )
     usable = {name: p for name, p in predictions.items() if len(np.unique(p["y_true"])) == 2}
     if not usable:
         return
@@ -570,8 +579,12 @@ def plot_pr_curves(dataset_path: Path, output_path: Path, time_column: str | Non
     _savefig(output_path, dpi=300)
 
 
-def plot_confusion_matrices(dataset_path: Path, output_path: Path, time_column: str | None = None) -> None:
-    predictions = model_predictions_for_plotting(dataset_path, time_column=time_column)
+def plot_confusion_matrices(
+    dataset_path: Path, output_path: Path, time_column: str | None = None, **split_kwargs
+) -> None:
+    predictions = model_predictions_for_plotting(
+        dataset_path, time_column=time_column, **split_kwargs
+    )
     usable = {name: p for name, p in predictions.items() if len(np.unique(p["y_true"])) == 2}
     if not usable:
         return
@@ -609,8 +622,12 @@ def plot_confusion_matrices(dataset_path: Path, output_path: Path, time_column: 
     _savefig(output_path, dpi=300)
 
 
-def plot_feature_importance(dataset_path: Path, output_path: Path, time_column: str | None = None) -> None:
-    predictions = model_predictions_for_plotting(dataset_path, time_column=time_column)
+def plot_feature_importance(
+    dataset_path: Path, output_path: Path, time_column: str | None = None, **split_kwargs
+) -> None:
+    predictions = model_predictions_for_plotting(
+        dataset_path, time_column=time_column, **split_kwargs
+    )
     importances: dict[str, np.ndarray] = {}
     for name in ("decision_tree", "random_forest", "xgboost", "lightgbm"):
         entry = predictions.get(name)
@@ -642,9 +659,15 @@ def plot_threshold_sensitivity(
     dataset_path: Path,
     output_path: Path,
     current_threshold_km: float | None = None,
+    time_column: str | None = None,
+    **split_kwargs,
 ) -> None:
     df = pd.read_csv(dataset_path, **_CSV_KWARGS)
     if df.empty or "risk_label" not in df.columns:
+        return
+    try:
+        df = _split_data(df, time_column, **split_kwargs).test
+    except InsufficientGroupedSplitError:
         return
     y_true = df["risk_label"].astype(int)
     if y_true.nunique() < 2:
@@ -687,6 +710,9 @@ def create_publication_plots(
     output_dir: Path,
     time_column: str | None = None,
     current_threshold_km: float | None = None,
+    train_time_fraction: float = 0.75,
+    test_pair_fraction: float = 0.25,
+    pair_seed: str = "iac26-pair-split-v1",
 ) -> list[Path]:
     outputs = [
         output_dir / "pub_pr_curves.png",
@@ -694,8 +720,19 @@ def create_publication_plots(
         output_dir / "pub_feature_importance.png",
         output_dir / "pub_threshold_sensitivity.png",
     ]
-    plot_pr_curves(dataset_path, outputs[0], time_column=time_column)
-    plot_confusion_matrices(dataset_path, outputs[1], time_column=time_column)
-    plot_feature_importance(dataset_path, outputs[2], time_column=time_column)
-    plot_threshold_sensitivity(dataset_path, outputs[3], current_threshold_km=current_threshold_km)
+    split_kwargs = {
+        "train_time_fraction": train_time_fraction,
+        "test_pair_fraction": test_pair_fraction,
+        "pair_seed": pair_seed,
+    }
+    plot_pr_curves(dataset_path, outputs[0], time_column=time_column, **split_kwargs)
+    plot_confusion_matrices(dataset_path, outputs[1], time_column=time_column, **split_kwargs)
+    plot_feature_importance(dataset_path, outputs[2], time_column=time_column, **split_kwargs)
+    plot_threshold_sensitivity(
+        dataset_path,
+        outputs[3],
+        current_threshold_km=current_threshold_km,
+        time_column=time_column,
+        **split_kwargs,
+    )
     return [path for path in outputs if path.exists()]

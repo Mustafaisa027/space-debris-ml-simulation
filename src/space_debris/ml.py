@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -73,27 +75,157 @@ REPORT_COLUMNS = [
     "true_negative",
     "train_rows",
     "test_rows",
+    "train_pairs",
+    "test_pairs",
+    "excluded_rows",
+    "cutoff_utc",
     "split",
     "note",
 ]
 
 
-def _split_data(df: pd.DataFrame, time_column: str | None):
-    x = df[FEATURES]
+PAIR_COLUMNS = ["object_1", "object_2"]
+PAIR_CATALOG_ID_COLUMNS = ["object_1_catalog_id", "object_2_catalog_id"]
+PAIR_SPLIT_SEED = "iac26-pair-split-v1"
+
+
+class InsufficientGroupedSplitError(ValueError):
+    """Raised when independent pair cohorts cannot form train and test sets."""
+
+
+@dataclass(frozen=True)
+class SplitResult:
+    train: pd.DataFrame
+    test: pd.DataFrame
+    excluded: pd.DataFrame
+    split_name: str
+    metadata: dict[str, object]
+
+
+def _canonical_pair_ids(df: pd.DataFrame) -> pd.Series:
+    missing = [column for column in PAIR_COLUMNS if column not in df.columns]
+    if missing:
+        raise ValueError(f"Pair-grouped split requires columns: {missing}")
+    if df[PAIR_COLUMNS].isna().any().any():
+        raise ValueError("Pair identity columns cannot contain missing values")
+    use_catalog_ids = all(column in df.columns for column in PAIR_CATALOG_ID_COLUMNS)
+    if use_catalog_ids:
+        catalog = df[PAIR_CATALOG_ID_COLUMNS]
+        use_catalog_ids = not catalog.isna().any().any() and not (
+            catalog.astype(str).apply(lambda column: column.str.strip().eq("")).any().any()
+        )
+    identity_columns = PAIR_CATALOG_ID_COLUMNS if use_catalog_ids else PAIR_COLUMNS
+    left = df[identity_columns[0]].astype(str).str.strip()
+    right = df[identity_columns[1]].astype(str).str.strip()
+    if (left == "").any() or (right == "").any():
+        raise ValueError("Pair identity columns cannot contain empty values")
+    return pd.Series(
+        np.where(left <= right, left + "|" + right, right + "|" + left),
+        index=df.index,
+        name="canonical_pair_id",
+    )
+
+
+def _validated_times(df: pd.DataFrame, time_column: str) -> pd.Series:
+    if time_column not in df.columns:
+        raise ValueError(f"time_column={time_column!r} not found in dataset")
+    return pd.to_datetime(df[time_column], utc=True, errors="raise", format="ISO8601")
+
+
+def _pair_is_test(pair_id: str, test_pair_fraction: float, pair_seed: str) -> bool:
+    digest = hashlib.sha256(f"{pair_seed}|{pair_id}".encode("utf-8")).digest()
+    score = int.from_bytes(digest[:8], "big") / 2**64
+    return score < test_pair_fraction
+
+
+def _pair_grouped_time_split(
+    df: pd.DataFrame,
+    time_column: str,
+    train_time_fraction: float = 0.75,
+    test_pair_fraction: float = 0.25,
+    pair_seed: str = PAIR_SPLIT_SEED,
+) -> SplitResult:
+    """Hold out deterministic pairs in a strictly future snapshot window.
+
+    SHA-256 assigns every canonical pair permanently to the train or test
+    group. The cutoff lies between complete timestamp blocks. Training uses
+    only train-pair observations before the cutoff; testing uses only test-pair
+    observations at/after it. Cross-quadrant rows are retained as ``excluded``
+    metadata rather than silently leaking into the opposite partition.
+    """
+    if not 0.0 < train_time_fraction < 1.0:
+        raise ValueError("train_time_fraction must be between 0 and 1")
+    if not 0.0 < test_pair_fraction < 1.0:
+        raise ValueError("test_pair_fraction must be between 0 and 1")
+    timestamps = _validated_times(df, time_column)
+    pair_ids = _canonical_pair_ids(df)
+    unique_times = pd.Index(timestamps.unique()).sort_values()
+    if len(unique_times) < 2:
+        raise InsufficientGroupedSplitError("Need at least two distinct snapshot timestamps.")
+    cutoff_index = min(max(1, int(np.ceil(len(unique_times) * train_time_fraction))), len(unique_times) - 1)
+    cutoff = unique_times[cutoff_index]
+
+    pair_assignment = {
+        pair_id: _pair_is_test(pair_id, test_pair_fraction, pair_seed)
+        for pair_id in pair_ids.unique()
+    }
+    is_test_pair = pair_ids.map(pair_assignment).astype(bool)
+    train_mask = (~is_test_pair) & (timestamps < cutoff)
+    test_mask = is_test_pair & (timestamps >= cutoff)
+    excluded_mask = ~(train_mask | test_mask)
+    train = df.loc[train_mask].copy()
+    test = df.loc[test_mask].copy()
+    excluded = df.loc[excluded_mask].copy()
+    if train.empty or test.empty:
+        raise InsufficientGroupedSplitError(
+            "Pair/time intersection produced an empty train or test partition."
+        )
+
+    train_pairs = set(pair_ids[train_mask])
+    test_pairs = set(pair_ids[test_mask])
+    if train_pairs & test_pairs:
+        raise AssertionError("Canonical pair leakage detected in grouped split")
+    train_times = timestamps[train_mask]
+    test_times = timestamps[test_mask]
+    if not train_times.max() < test_times.min():
+        raise AssertionError("Chronological leakage detected in grouped split")
+
+    metadata = {
+        "cutoff_utc": cutoff.isoformat(),
+        "pair_seed": pair_seed,
+        "test_pair_fraction": test_pair_fraction,
+        "train_time_fraction": train_time_fraction,
+        "train_pairs": len(train_pairs),
+        "test_pairs": len(test_pairs),
+        "train_rows": len(train),
+        "test_rows": len(test),
+        "excluded_rows": len(excluded),
+    }
+    return SplitResult(train, test, excluded, "pair_grouped_time", metadata)
+
+
+def _split_data(
+    df: pd.DataFrame,
+    time_column: str | None,
+    *,
+    train_time_fraction: float = 0.75,
+    test_pair_fraction: float = 0.25,
+    pair_seed: str = PAIR_SPLIT_SEED,
+) -> SplitResult:
     y = df["risk_label"].astype(int)
-    if time_column and time_column in df.columns:
-        ordered = df.sort_values(time_column).reset_index(drop=True)
-        split_at = max(1, int(len(ordered) * 0.75))
-        split_at = min(split_at, len(ordered) - 1)
-        train = ordered.iloc[:split_at]
-        test = ordered.iloc[split_at:]
-        return train[FEATURES], test[FEATURES], train["risk_label"].astype(int), test["risk_label"].astype(int), "time"
+    if time_column:
+        return _pair_grouped_time_split(
+            df, time_column, train_time_fraction, test_pair_fraction, pair_seed
+        )
 
     stratify = y if y.value_counts().min() >= 2 else None
-    x_train, x_test, y_train, y_test = train_test_split(
-        x, y, test_size=0.35, random_state=42, stratify=stratify
+    train, test = train_test_split(
+        df, test_size=0.35, random_state=42, stratify=stratify
     )
-    return x_train, x_test, y_train, y_test, "random"
+    return SplitResult(
+        train.copy(), test.copy(), df.iloc[0:0].copy(), "random",
+        {"train_rows": len(train), "test_rows": len(test), "excluded_rows": 0},
+    )
 
 
 def _ranking_score(model, x_test):
@@ -178,16 +310,26 @@ def _not_enough_data_row(model: str, note: str, train_rows=None, test_rows=None,
         "true_negative": None,
         "train_rows": train_rows,
         "test_rows": test_rows,
+        "train_pairs": None,
+        "test_pairs": None,
+        "excluded_rows": None,
+        "cutoff_utc": None,
         "split": split,
         "note": note,
     }
 
 
-def _evaluate_split(df: pd.DataFrame, x_train, x_test, y_train, y_test, split_name: str) -> list[dict]:
+def _evaluate_split(split: SplitResult, split_name: str | None = None) -> list[dict]:
     """Fit every model on one train/test split and score it. Shared by the
     single chronological split (compare_models) and each fold of
     TimeSeriesSplit cross-validation (time_series_cv_report).
     """
+    train = split.train
+    test = split.test
+    x_train, x_test = train[FEATURES], test[FEATURES]
+    y_train = train["risk_label"].astype(int)
+    y_test = test["risk_label"].astype(int)
+    split_name = split_name or split.split_name
     n_pos = int((y_train == 1).sum())
     n_neg = int((y_train == 0).sum())
     scale_pos_weight = (n_neg / n_pos) if n_pos > 0 else 1.0
@@ -201,8 +343,8 @@ def _evaluate_split(df: pd.DataFrame, x_train, x_test, y_train, y_test, split_na
             # Purely distance-based baseline: no training required. Its
             # binary alarm doubles as a (degenerate, two-level) ranking
             # score so PR-AUC/ROC-AUC stay comparable across all models.
-            pred = df.loc[x_test.index, "fixed_threshold_alarm"].astype(int)
-            scores = pred.to_numpy()
+            pred = test["fixed_threshold_alarm"].astype(int).to_numpy()
+            scores = pred
         elif not trainable:
             rows.append(
                 _not_enough_data_row(
@@ -239,6 +381,10 @@ def _evaluate_split(df: pd.DataFrame, x_train, x_test, y_train, y_test, split_na
                 "true_negative": int(tn),
                 "train_rows": int(len(y_train)),
                 "test_rows": int(len(y_test)),
+                "train_pairs": split.metadata.get("train_pairs"),
+                "test_pairs": split.metadata.get("test_pairs"),
+                "excluded_rows": split.metadata.get("excluded_rows", len(split.excluded)),
+                "cutoff_utc": split.metadata.get("cutoff_utc"),
                 "split": split_name,
                 "note": ranking_note,
             }
@@ -268,7 +414,14 @@ def _evaluate_split(df: pd.DataFrame, x_train, x_test, y_train, y_test, split_na
     return rows
 
 
-def model_predictions_for_plotting(dataset_path: Path, time_column: str | None = None) -> dict:
+def model_predictions_for_plotting(
+    dataset_path: Path,
+    time_column: str | None = None,
+    *,
+    train_time_fraction: float = 0.75,
+    test_pair_fraction: float = 0.25,
+    pair_seed: str = PAIR_SPLIT_SEED,
+) -> dict:
     """Per-model test-split predictions/scores/fitted estimator, for
     PUBLICATION FIGURES ONLY (PR curves, confusion matrices, feature
     importance in space_debris.plots) -- compare_models()/
@@ -285,7 +438,21 @@ def model_predictions_for_plotting(dataset_path: Path, time_column: str | None =
     if df.empty or df["risk_label"].nunique() < 2 or len(df) < 6:
         return {}
 
-    x_train, x_test, y_train, y_test, _split_name = _split_data(df, time_column)
+    try:
+        split = _split_data(
+            df,
+            time_column,
+            train_time_fraction=train_time_fraction,
+            test_pair_fraction=test_pair_fraction,
+            pair_seed=pair_seed,
+        )
+    except InsufficientGroupedSplitError:
+        return {}
+    train, test = split.train, split.test
+    if train["risk_label"].nunique() < 2 or test["risk_label"].nunique() < 2:
+        return {}
+    x_train, x_test = train[FEATURES], test[FEATURES]
+    y_train, y_test = train["risk_label"].astype(int), test["risk_label"].astype(int)
     n_pos = int((y_train == 1).sum())
     n_neg = int((y_train == 0).sum())
     scale_pos_weight = (n_neg / n_pos) if n_pos > 0 else 1.0
@@ -296,7 +463,7 @@ def model_predictions_for_plotting(dataset_path: Path, time_column: str | None =
     predictions: dict = {}
     for name, model in models.items():
         if name == "fixed_threshold":
-            pred = df.loc[x_test.index, "fixed_threshold_alarm"].astype(int).to_numpy()
+            pred = test["fixed_threshold_alarm"].astype(int).to_numpy()
             scores = pred
             fitted_model = None
         elif not trainable:
@@ -348,6 +515,9 @@ def compare_models(
     *,
     source: str = "",
     config_summary: str = "",
+    train_time_fraction: float = 0.75,
+    test_pair_fraction: float = 0.25,
+    pair_seed: str = PAIR_SPLIT_SEED,
 ) -> pd.DataFrame:
     df = pd.read_csv(dataset_path, comment="#")
     missing = [feature for feature in FEATURES + ["risk_label", "fixed_threshold_alarm"] if feature not in df.columns]
@@ -366,8 +536,38 @@ def compare_models(
         write_csv_text_with_provenance(report_path, report.to_csv(index=False), source, config_summary)
         return report
 
-    x_train, x_test, y_train, y_test, split_name = _split_data(df, time_column)
-    rows = _evaluate_split(df, x_train, x_test, y_train, y_test, split_name)
+    try:
+        split = _split_data(
+            df,
+            time_column,
+            train_time_fraction=train_time_fraction,
+            test_pair_fraction=test_pair_fraction,
+            pair_seed=pair_seed,
+        )
+    except InsufficientGroupedSplitError as exc:
+        report = pd.DataFrame([_not_enough_data_row("not_enough_data", str(exc))])
+        write_csv_text_with_provenance(report_path, report.to_csv(index=False), source, config_summary)
+        return report
+    train_classes = split.train["risk_label"].nunique()
+    test_classes = split.test["risk_label"].nunique()
+    if train_classes < 2 or test_classes < 2:
+        note = (
+            "Grouped train and test partitions must each contain both risk_label classes; "
+            f"got train_classes={train_classes}, test_classes={test_classes}."
+        )
+        row = _not_enough_data_row(
+            "not_enough_data", note, len(split.train), len(split.test), split.split_name
+        )
+        row.update(
+            train_pairs=split.metadata.get("train_pairs"),
+            test_pairs=split.metadata.get("test_pairs"),
+            excluded_rows=split.metadata.get("excluded_rows"),
+            cutoff_utc=split.metadata.get("cutoff_utc"),
+        )
+        report = pd.DataFrame([row])[REPORT_COLUMNS]
+        write_csv_text_with_provenance(report_path, report.to_csv(index=False), source, config_summary)
+        return report
+    rows = _evaluate_split(split)
 
     report = pd.DataFrame(rows)[REPORT_COLUMNS]
     write_csv_text_with_provenance(report_path, report.to_csv(index=False), source, config_summary)
@@ -382,12 +582,15 @@ def time_series_cv_report(
     *,
     source: str = "",
     config_summary: str = "",
+    test_pair_fraction: float = 0.25,
+    pair_seed: str = PAIR_SPLIT_SEED,
 ) -> pd.DataFrame:
-    """TimeSeriesSplit cross-validation, aggregated as mean +/- std per
-    model/metric. This is an OPTION alongside (not a replacement for) the
-    single chronological split in compare_models(): more folds give a less
-    noisy read of how stable each model's PR-AUC/ROC-AUC is across the
-    accumulated history, at the cost of smaller/earlier training folds.
+    """Pair-held-out expanding-window validation over whole timestamp blocks.
+
+    Train folds contain only deterministic train-pair observations from past
+    blocks; test folds contain only deterministic test-pair observations in
+    the future block. Cross-quadrant observations are excluded, preventing
+    both pair memorization and future leakage.
     """
     df = pd.read_csv(dataset_path, comment="#")
     missing = [feature for feature in FEATURES + ["risk_label", "fixed_threshold_alarm"] if feature not in df.columns]
@@ -401,9 +604,7 @@ def time_series_cv_report(
     if not config_summary:
         config_summary = f"time_column={time_column}, n_splits={n_splits}"
 
-    ordered = df.sort_values(time_column).reset_index(drop=True)
-
-    if len(ordered) < n_splits + 1 or ordered["risk_label"].nunique() < 2:
+    if len(df) < n_splits + 1 or df["risk_label"].nunique() < 2:
         report = pd.DataFrame(
             [
                 {
@@ -419,17 +620,51 @@ def time_series_cv_report(
         write_csv_text_with_provenance(report_path, report.to_csv(index=False), source, config_summary)
         return report
 
-    x = ordered[FEATURES]
-    y = ordered["risk_label"].astype(int)
+    timestamps = _validated_times(df, time_column)
+    pair_ids = _canonical_pair_ids(df)
+    time_blocks = np.asarray(list(pd.Index(timestamps.unique()).sort_values()), dtype=object)
+    if len(time_blocks) < n_splits + 1:
+        report = pd.DataFrame(
+            [{"model": "not_enough_data", "metric": None, "mean": None, "std": None,
+              "folds": 0, "note": f"Need > {n_splits} snapshot blocks for grouped CV."}]
+        )
+        write_csv_text_with_provenance(report_path, report.to_csv(index=False), source, config_summary)
+        return report
+    pair_assignment = {
+        pair_id: _pair_is_test(pair_id, test_pair_fraction, pair_seed)
+        for pair_id in pair_ids.unique()
+    }
+    is_test_pair = pair_ids.map(pair_assignment).astype(bool)
     splitter = TimeSeriesSplit(n_splits=n_splits)
 
     fold_rows: list[dict] = []
-    for fold_index, (train_idx, test_idx) in enumerate(splitter.split(x)):
-        x_train, x_test = x.iloc[train_idx], x.iloc[test_idx]
-        y_train, y_test = y.iloc[train_idx], y.iloc[test_idx]
-        fold_rows.extend(
-            _evaluate_split(ordered, x_train, x_test, y_train, y_test, split_name=f"cv_fold_{fold_index}")
+    valid_partitions = 0
+    for fold_index, (train_idx, test_idx) in enumerate(splitter.split(time_blocks)):
+        train_times = set(time_blocks[train_idx])
+        test_times = set(time_blocks[test_idx])
+        train_mask = (~is_test_pair) & timestamps.isin(train_times)
+        test_mask = is_test_pair & timestamps.isin(test_times)
+        if not train_mask.any() or not test_mask.any():
+            continue
+        split = SplitResult(
+            train=df.loc[train_mask].copy(),
+            test=df.loc[test_mask].copy(),
+            excluded=df.loc[~(train_mask | test_mask)].copy(),
+            split_name=f"pair_grouped_cv_fold_{fold_index}",
+            metadata={"train_time_blocks": len(train_times), "test_time_blocks": len(test_times)},
         )
+        valid_partitions += 1
+        fold_rows.extend(
+            _evaluate_split(split)
+        )
+
+    if not fold_rows:
+        report = pd.DataFrame(
+            [{"model": "not_enough_data", "metric": None, "mean": None, "std": None,
+              "folds": 0, "note": "All pair/time CV intersections were empty."}]
+        )
+        write_csv_text_with_provenance(report_path, report.to_csv(index=False), source, config_summary)
+        return report
 
     fold_df = pd.DataFrame(fold_rows)
     metrics = ["pr_auc", "roc_auc", "precision", "recall", "f1", "accuracy"]
@@ -445,6 +680,8 @@ def time_series_cv_report(
                     "mean": float(values.mean()) if len(values) else None,
                     "std": float(values.std()) if len(values) > 1 else (0.0 if len(values) == 1 else None),
                     "folds": int(len(values)),
+                    "total_folds": int(n_splits),
+                    "valid_partitions": int(valid_partitions),
                 }
             )
 

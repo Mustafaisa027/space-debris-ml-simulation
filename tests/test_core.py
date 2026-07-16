@@ -178,6 +178,8 @@ def test_simulate_pairs_smoke():
     assert r.min_distance_km <= r.current_distance_km + 1e-6
     assert r.relative_velocity_km_s >= 0.0
     assert r.risk_label in (0, 1)
+    assert r.object_1_catalog_id.isdigit()
+    assert r.object_2_catalog_id.isdigit()
 
     # GOREV 5 geometry features: sane ranges and internal consistency.
     assert 0.0 <= r.relative_inclination_deg <= 180.0
@@ -432,6 +434,47 @@ def test_refined_tca_never_worse_than_coarse_grid_only():
         assert by_pair[key].min_distance_km <= coarse_best + 1e-6
 
     assert checked > 0
+
+
+def test_conservative_pair_screening_preserves_all_exact_candidates():
+    objs = read_tles(DEMO_TLE)[:6]
+    sats = build_satellites(objs)
+    start = datetime(2026, 7, 1, tzinfo=timezone.utc)
+    kwargs = dict(
+        satellites=sats,
+        start_utc=start,
+        horizon_minutes=15,
+        step_minutes=5,
+        leo_min_altitude_km=160,
+        leo_max_altitude_km=2000,
+        fixed_threshold_km=50,
+        label_threshold_km=200,
+        label_relative_velocity_km_s=5,
+    )
+    exact = simulate_pairs(**kwargs)
+    report = {}
+    screened = simulate_pairs(
+        **kwargs,
+        candidate_screening_threshold_km=2000.0,
+        screening_report=report,
+    )
+
+    exact_candidates = {
+        tuple(sorted((row.object_1, row.object_2))): row
+        for row in exact
+        if row.min_distance_km <= 2000.0
+    }
+    screened_by_pair = {
+        tuple(sorted((row.object_1, row.object_2))): row for row in screened
+    }
+
+    assert set(exact_candidates) <= set(screened_by_pair)
+    for pair, exact_row in exact_candidates.items():
+        assert screened_by_pair[pair].min_distance_km == pytest.approx(
+            exact_row.min_distance_km, abs=1e-6
+        )
+    assert report["total_pairs"] >= report["refined_pairs"]
+    assert report["screened_pairs"] + report["refined_pairs"] == report["total_pairs"]
 
 
 def _make_pair_result(**overrides) -> PairResult:
