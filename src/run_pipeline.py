@@ -18,6 +18,29 @@ from space_debris.plots import create_pipeline_plots, create_publication_plots, 
 from space_debris.provenance import png_provenance_metadata
 
 
+def _resolve_pair_satellites(satellites, pair):
+    """Resolve a result pair by NORAD ID; names are not unique for debris."""
+    by_catalog_id = {str(satellite.model.satnum): satellite for satellite in satellites}
+    if pair.object_1_catalog_id and pair.object_2_catalog_id:
+        try:
+            return (
+                by_catalog_id[str(pair.object_1_catalog_id)],
+                by_catalog_id[str(pair.object_2_catalog_id)],
+            )
+        except KeyError as exc:
+            raise ValueError(f"Pair references unknown NORAD catalogue ID: {exc.args[0]}") from exc
+
+    def unique_name(name):
+        matches = [satellite for satellite in satellites if satellite.name == name]
+        if len(matches) != 1:
+            raise ValueError(
+                f"Cannot resolve non-unique/missing satellite name {name!r}; catalogue IDs are required"
+            )
+        return matches[0]
+
+    return unique_name(pair.object_1), unique_name(pair.object_2)
+
+
 def parse_args() -> argparse.Namespace:
     config_parser = argparse.ArgumentParser(add_help=False)
     config_parser.add_argument("--config", default=str(DEFAULT_EXPERIMENT_CONFIG))
@@ -115,11 +138,11 @@ def main() -> None:
     )
 
     if rows:
-        satellites_by_name = {sat.name: sat for sat in satellites}
         top = rows[0]
+        top_satellite_1, top_satellite_2 = _resolve_pair_satellites(satellites, top)
         physical_plots = create_top_pair_physical_plots(
-            satellites_by_name[top.object_1],
-            satellites_by_name[top.object_2],
+            top_satellite_1,
+            top_satellite_2,
             start_utc,
             args.horizon_minutes,
             args.step_minutes,
@@ -127,8 +150,8 @@ def main() -> None:
         )
         write_distance_timeseries(
             top_pair_timeseries_path,
-            satellites_by_name[top.object_1],
-            satellites_by_name[top.object_2],
+            top_satellite_1,
+            top_satellite_2,
             start_utc,
             args.horizon_minutes,
             args.step_minutes,

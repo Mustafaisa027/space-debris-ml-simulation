@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 
 from rebuild_history import rebuild_latest_schema_history
 
@@ -141,3 +142,40 @@ def test_rebuild_accepts_header_only_zero_candidate_run(tmp_path):
     assert report["rows_written"] == 0
     with output.open(newline="", encoding="utf-8") as stream:
         assert list(csv.DictReader(stream)) == []
+
+
+def test_rebuild_filters_to_frozen_catalog_version(tmp_path):
+    run_root = tmp_path / "runs"
+    snapshots = tmp_path / "snapshots"
+    snapshots.mkdir()
+    columns = ["snapshot_utc", "object_1", "object_2", "min_distance_km"]
+    for collection_id, version in (("old", "legacy-v0"), ("new", "iac26-75-v1")):
+        _write_dataset(
+            run_root / collection_id / "conjunction_dataset.csv",
+            columns,
+            ["2026-01-01Z", "A", collection_id, "10"],
+        )
+        (snapshots / f"tles_{collection_id}.json").write_text(
+            json.dumps({
+                "catalog_version": version,
+                "catalog_sha256": f"hash-{version}",
+                "object_count": 75,
+            }),
+            encoding="utf-8",
+        )
+
+    output = tmp_path / "history.csv"
+    report = rebuild_latest_schema_history(
+        run_root,
+        snapshots,
+        output,
+        catalog_version="iac26-75-v1",
+        catalog_sha256="hash-iac26-75-v1",
+    )
+
+    assert report["included_runs"] == ["new"]
+    assert report["skipped_catalog_version_runs"] == ["old"]
+    with output.open(newline="", encoding="utf-8") as stream:
+        rows = list(csv.DictReader(stream))
+    assert rows[0]["catalog_version"] == "iac26-75-v1"
+    assert rows[0]["catalog_sha256"] == "hash-iac26-75-v1"

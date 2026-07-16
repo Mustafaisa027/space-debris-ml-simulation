@@ -1,4 +1,4 @@
-"""Unit tests for space_debris.plots: provenance-embedded PNGs and the four
+"""Unit tests for space_debris.plots: provenance-embedded PNGs and the five
 publication-ready figures (ROADMAP_YOL1.md GOREV 6).
 
 Run with:  PYTHONPATH=src python -m pytest tests/ -q
@@ -72,7 +72,7 @@ def test_publication_plots_render_on_balanced_dataset(tmp_path):
 
     outputs = plots.create_publication_plots(dataset_path, tmp_path, current_threshold_km=25.0)
 
-    assert len(outputs) == 4
+    assert len(outputs) == 5
     for path in outputs:
         assert path.exists()
         assert path.stat().st_size > 0

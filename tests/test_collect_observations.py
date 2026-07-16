@@ -43,6 +43,43 @@ def test_resolve_source_explicit_group_overrides_preset():
     assert groups == ["WEATHER"]
 
 
+def test_frozen_catalog_cohort_requires_exact_id_set_and_no_override():
+    ids = list(fetch_tles.LEO_MIXED_CATALOG)
+    expected_hash = collect_observations.catalog_id_set_sha256(ids)
+    args = _args(
+        max_objects=75,
+        catalog_sha256=expected_hash,
+        catalog_version="iac26-leo-mixed-75-v1",
+    )
+    report = {"catalog_ids": ids, "requested_count": 75}
+
+    assert collect_observations.validate_catalog_cohort(
+        args, ids, [], "preset:leo_mixed", report
+    ) == expected_hash
+
+    with pytest.raises(RuntimeError, match="Frozen catalogue cohort mismatch"):
+        collect_observations.validate_catalog_cohort(
+            _args(
+                catnr=[ids[0]],
+                max_objects=75,
+                catalog_sha256=expected_hash,
+            ),
+            [ids[0]],
+            [],
+            "explicit",
+            {"catalog_ids": [ids[0]], "requested_count": 1},
+        )
+
+    with pytest.raises(RuntimeError, match="Frozen catalogue cohort mismatch"):
+        collect_observations.validate_catalog_cohort(
+            args,
+            ids,
+            [],
+            "preset:leo_mixed",
+            {"catalog_ids": ids[:-1], "requested_count": 75},
+        )
+
+
 def test_main_reports_single_collect_once_failure_to_scheduler(monkeypatch):
     calls = {"n": 0}
 
@@ -114,6 +151,7 @@ def test_collect_once_writes_provenance_sidecar(monkeypatch, tmp_path):
         once=True,
         max_objects=None,
         provider="auto",
+        catalog_version="iac26-test-v1",
         snapshot_dir=str(tmp_path / "snapshots"),
         run_root=str(tmp_path / "runs"),
         history=str(tmp_path / "history" / "conjunction_observations.csv"),
@@ -138,6 +176,8 @@ def test_collect_once_writes_provenance_sidecar(monkeypatch, tmp_path):
     provenance = json.loads(json_files[0].read_text(encoding="utf-8"))
     assert provenance["source"] == "preset:leo_mixed"
     assert provenance["preset"] == "leo_mixed"
+    assert provenance["catalog_version"] == "iac26-test-v1"
+    assert len(provenance["catalog_sha256"]) == 64
     assert provenance["object_count"] == 6
     assert "fetched_utc" in provenance and provenance["fetched_utc"].endswith("Z")
     assert "git_commit" in provenance
@@ -150,7 +190,10 @@ def test_collect_once_writes_provenance_sidecar(monkeypatch, tmp_path):
     history_path = tmp_path / "history" / "conjunction_observations.csv"
     assert history_path.exists()
     header = history_path.read_text(encoding="utf-8").splitlines()[0]
-    assert "source" in header and "preset" in header and "fetched_utc" in header
+    assert all(
+        name in header
+        for name in ("source", "preset", "catalog_version", "fetched_utc")
+    )
     # write_pair_results() embeds a '#' provenance header in dataset_path
     # (ROADMAP_YOL1.md GOREV 6); append_csv must not have leaked a literal
     # '#' comment line into the accumulated history CSV.

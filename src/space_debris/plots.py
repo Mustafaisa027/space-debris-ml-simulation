@@ -15,6 +15,8 @@ from sklearn.metrics import (
     confusion_matrix,
     precision_recall_curve,
     precision_recall_fscore_support,
+    roc_auc_score,
+    roc_curve,
 )
 from skyfield.api import load
 
@@ -539,7 +541,8 @@ def create_pipeline_plots(
 
 # --- Publication-ready figures (ROADMAP_YOL1.md GOREV 6) ---------------
 # 300 DPI, explicit titles/axis labels, one clear question each: does ML
-# beat the baseline (PR curves), where do the errors land (confusion
+# beat the baseline (PR curves), how false alarms trade against recall
+# (operating-characteristic curves), where do the errors land (confusion
 # matrices), which features drive the tree models (feature importance), and
 # how arbitrary is the classical fixed-distance operating point (threshold
 # sensitivity)? These re-fit models purely for plotting via
@@ -575,6 +578,47 @@ def plot_pr_curves(
     plt.ylim(0.0, 1.02)
     plt.grid(True, alpha=0.3)
     plt.legend(loc="best", fontsize=9)
+    plt.tight_layout()
+    _savefig(output_path, dpi=300)
+
+
+def plot_false_alarm_recall_curves(
+    dataset_path: Path, output_path: Path, time_column: str | None = None, **split_kwargs
+) -> None:
+    """Plot recall against false alarm rate over every score threshold.
+
+    This is the operating-characteristic view needed for a fair false-alarm
+    claim: models can be compared at the same recall without choosing a new
+    decision threshold from the held-out test labels.  The fixed-distance
+    baseline contributes its continuous ``-min_distance_km`` ranking here;
+    its configured binary operating point remains in the confusion matrices.
+    """
+    predictions = model_predictions_for_plotting(
+        dataset_path, time_column=time_column, **split_kwargs
+    )
+    usable = {name: p for name, p in predictions.items() if len(np.unique(p["y_true"])) == 2}
+    if not usable:
+        return
+
+    _ensure_dir(output_path)
+    plt.figure(figsize=(8, 6))
+    for name, p in usable.items():
+        false_alarm_rate, recall, _ = roc_curve(p["y_true"], p["scores"])
+        auc = roc_auc_score(p["y_true"], p["scores"])
+        plt.plot(
+            false_alarm_rate,
+            recall,
+            linewidth=1.8,
+            label=f"{name} (AUC={auc:.3f})",
+        )
+    plt.plot([0.0, 1.0], [0.0, 1.0], color="#888888", linestyle=":", linewidth=1.3)
+    plt.xlabel("False alarm rate, FP / (FP + TN)")
+    plt.ylabel("Recall")
+    plt.title("False Alarm Rate vs Recall (held-out test split)")
+    plt.xlim(-0.01, 1.01)
+    plt.ylim(-0.01, 1.01)
+    plt.grid(True, alpha=0.3)
+    plt.legend(loc="lower right", fontsize=9)
     plt.tight_layout()
     _savefig(output_path, dpi=300)
 
@@ -716,6 +760,7 @@ def create_publication_plots(
 ) -> list[Path]:
     outputs = [
         output_dir / "pub_pr_curves.png",
+        output_dir / "pub_false_alarm_recall_curves.png",
         output_dir / "pub_confusion_matrices.png",
         output_dir / "pub_feature_importance.png",
         output_dir / "pub_threshold_sensitivity.png",
@@ -726,11 +771,14 @@ def create_publication_plots(
         "pair_seed": pair_seed,
     }
     plot_pr_curves(dataset_path, outputs[0], time_column=time_column, **split_kwargs)
-    plot_confusion_matrices(dataset_path, outputs[1], time_column=time_column, **split_kwargs)
-    plot_feature_importance(dataset_path, outputs[2], time_column=time_column, **split_kwargs)
+    plot_false_alarm_recall_curves(
+        dataset_path, outputs[1], time_column=time_column, **split_kwargs
+    )
+    plot_confusion_matrices(dataset_path, outputs[2], time_column=time_column, **split_kwargs)
+    plot_feature_importance(dataset_path, outputs[3], time_column=time_column, **split_kwargs)
     plot_threshold_sensitivity(
         dataset_path,
-        outputs[3],
+        outputs[4],
         current_threshold_km=current_threshold_km,
         time_column=time_column,
         **split_kwargs,

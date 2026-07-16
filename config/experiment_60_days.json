@@ -6,6 +6,8 @@
   "note": "Thresholds are in km and are physically interpretable conjunction-screening scales, not the earlier 3000-10000 km placeholders.",
   "default_query": {
     "preset": "leo_mixed",
+    "catalog_version": "iac26-leo-mixed-75-v1",
+    "catalog_sha256": "64c3d2329281da0e246226cb552aafe3b961c553c9487d7cfd9c96374aaa1f4c",
     "max_objects": 75
   },
   "simulation": {
@@ -24,16 +26,24 @@
     "time_column": "snapshot_utc",
     "train_time_fraction": 0.75,
     "test_pair_fraction": 0.25,
-    "pair_seed": "iac26-pair-split-v1"
+    "pair_seed": "iac26-pair-split-v1",
+    "quality_gate": {
+      "min_train_positive_rows": 30,
+      "min_test_positive_rows": 20,
+      "min_train_positive_pairs": 10,
+      "min_test_positive_pairs": 5,
+      "min_train_positive_snapshots": 5,
+      "min_test_positive_snapshots": 3
+    }
   },
   "outputs": {
-    "snapshots": "data/tle_snapshots",
-    "runs": "outputs/runs",
-    "history": "outputs/history/conjunction_observations_v3.csv",
-    "history_rebuild_report": "outputs/history/history_rebuild_report_v3.json",
-    "resimulated_runs": "outputs/resimulated_runs_v3",
-    "resimulated_history": "outputs/history/conjunction_observations_resimulated_v3.csv",
-    "resimulation_report": "outputs/history/resimulation_report_v3.json",
-    "time_split_report": "outputs/history/model_comparison_pair_grouped_time_split.csv"
+    "snapshots": "data/tle_snapshots_iac26_75_v1",
+    "runs": "outputs/runs_iac26_75_v1",
+    "history": "outputs/history/conjunction_observations_iac26_75_v1.csv",
+    "history_rebuild_report": "outputs/history/history_rebuild_report_iac26_75_v1.json",
+    "resimulated_runs": "outputs/resimulated_runs_iac26_75_v1",
+    "resimulated_history": "outputs/history/conjunction_observations_resimulated_iac26_75_v1.csv",
+    "resimulation_report": "outputs/history/resimulation_report_iac26_75_v1.json",
+    "time_split_report": "outputs/history/model_comparison_iac26_75_v1_pair_grouped_time_split.csv"
   }
 }

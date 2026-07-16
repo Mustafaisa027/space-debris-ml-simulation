@@ -16,6 +16,8 @@ import argparse
 import json
 from pathlib import Path
 
+from space_debris.experiment import DEFAULT_EXPERIMENT_CONFIG, load_experiment_config
+
 from space_debris.provenance import generated_utc, git_commit_hash
 
 import matplotlib
@@ -243,10 +245,15 @@ def write_calibration_report(path: Path, history_path: Path, summary: dict, cali
 
 
 def parse_args() -> argparse.Namespace:
+    config_parser = argparse.ArgumentParser(add_help=False)
+    config_parser.add_argument("--config", default=str(DEFAULT_EXPERIMENT_CONFIG))
+    config_args, _ = config_parser.parse_known_args()
+    config = load_experiment_config(config_args.config)
     parser = argparse.ArgumentParser(
         description="Analyze accumulated conjunction history and suggest physically-defensible label thresholds"
     )
-    parser.add_argument("--history", default="outputs/history/conjunction_observations_v3.csv")
+    parser.add_argument("--config", default=str(config.path))
+    parser.add_argument("--history", default=config.resimulated_history)
     parser.add_argument("--output", default="config/threshold_calibration.json")
     parser.add_argument("--plots-dir", default="outputs/history")
     parser.add_argument("--target-positive-rate-low", type=float, default=0.02)

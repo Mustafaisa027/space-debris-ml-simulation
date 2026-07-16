@@ -21,10 +21,20 @@ from that observation:
 
 - A curated multi-orbit catalog, **`leo_mixed`**
   (`fetch_tles.LEO_MIXED_CATALOG`), is fetched object-by-object via `CATNR`.
+  It contains 75 independent NORAD IDs, including selected Iridium 33 and
+  Cosmos 2251 collision fragments. Display-name duplicates remain distinct
+  through catalogue-ID pair keys.
   It spans distinct LEO inclinations (ISS-like ~51.6 deg, sun-synchronous
   ~98-99 deg, ~28.5 deg) so the orbital planes actually cross — unlike a
   single constellation, whose satellites share near-identical planes and
   altitudes and therefore rarely produce genuine close approaches.
+- The final experiment freezes these IDs as catalogue cohort
+  `iac26-leo-mixed-75-v1`. Snapshot sidecars and history rows carry that value;
+  they also carry the SHA-256 of the sorted 75-ID set. Collection rejects
+  explicit/group overrides, a different object cap, or even one missing ID;
+  rebuild and training verify both version and hash and fail closed on a
+  different, partial, or mixed cohort. Earlier
+  5/43-object snapshots are retained only as an engineering/audit archive.
 - `fetch_gp_with_retry()` retries transient transport failures and HTTP
   403/408/425/429/5xx responses with capped attempts, exponential backoff,
   and jitter; if a `GROUP` query is blocked, `fetch_group_blocks()` falls back
@@ -58,7 +68,7 @@ metadata. This lets any table or figure in the paper be traced back to the
 exact code version and configuration that produced it.
 
 **Schema versioning.** The current accumulated file is
-`conjunction_observations_v3.csv`. `src/rebuild_history.py` reconstructs it
+`conjunction_observations_iac26_75_v1.csv`. `src/rebuild_history.py` reconstructs it
 from immutable per-run datasets and includes only the current 27-column pair
 schema; legacy schemas are preserved as raw runs and listed in
 `history_rebuild_report.json`, never silently coerced into shifted columns.
@@ -175,6 +185,15 @@ independent high-capacity alternatives to Random Forest. No oversampling is
 performed at this stage; SMOTE remains deferred until enough genuine positive
 observations exist to synthesize from.
 
+The training entry point also writes a separate
+`*_without_label_rule_features.csv` ablation on the exact same pair/time split.
+That supporting arm removes `min_distance_km` and
+`relative_velocity_km_s`—the two quantities used to construct the proxy
+label—and all three TCA RIC position components, whose joint norm would
+otherwise reconstruct minimum distance. It leaves the canonical real-data
+result unchanged. The performance gap between the two reports quantifies how
+much of the apparent skill is direct proxy-rule recovery.
+
 This matters because real conjunction events are rare (see Limitations):
 without reweighting, a classifier can achieve near-perfect accuracy by
 always predicting "not risky."
@@ -195,17 +214,38 @@ always predicting "not risky."
   total and metrically valid fold counts. A single-class test fold cannot
   contribute PR-AUC/ROC-AUC and is never used to claim model superiority.
 
+**Publication quality gate.** The authoritative experiment config requires at
+least 30 real positive training rows and 20 real positive test rows, spanning
+at least 10/5 independent positive catalogue pairs and 5/3 positive snapshots
+in train/test respectively. It also requires an observation span of at least
+`duration_days - poll_interval_hours / 24` (59.9167 days for the 60-day,
+two-hour cadence), so a high-yield catalogue cannot produce an early paper
+result. These support minimums are frozen before the final
+60-day held-out evaluation; they are not a formal external preregistration or a
+guarantee of statistical significance. If any minimum fails,
+`train_from_history.py` writes a `not_enough_data` report and produces no model
+or publication claim. The current short archive is expected to fail this gate;
+the 60-day collection must continue.
+
 **Metrics.** PR-AUC (`average_precision_score`) and ROC-AUC lead every
 report; accuracy is retained for context but is **not** the headline metric.
 Under severe class imbalance, a model that always predicts "not risky" still
 scores >99% accuracy while missing every real conjunction — this was
 observed directly in this project (all models reporting
 precision = recall = F1 = 0.0 while accuracy read ~99.99%) before PR-AUC/
-ROC-AUC were added. `compare_to_baseline_pr_auc()` explicitly reports each
-model's PR-AUC delta against the fixed-distance baseline.
+ROC-AUC were added. For the distance-only baseline, the configured 25 km alarm
+is the binary operating point used for precision/recall/F1 and confusion
+counts, while continuous `-min_distance_km` is used for PR-AUC/ROC-AUC. This
+avoids treating a two-level alarm as if it were a full ranking.
+`compare_to_baseline_pr_auc()` explicitly reports each model's PR-AUC delta
+against that continuous distance ranking. The report also records false alarm
+rate as `FP / (FP + TN)` for every model and the fixed 25 km operating point.
+Any claim of fewer false alarms must be read together with recall; a lower
+false alarm rate obtained by detecting fewer positives is not an improvement.
 
 **Publication figures** (`space_debris.plots`, 300 DPI): precision-recall
-curves per model, confusion matrices per model, tree-based feature
+curves per model, false-alarm-rate versus recall curves over all score
+thresholds, confusion matrices per model, tree-based feature
 importance (Random Forest / XGBoost), and a threshold-sensitivity sweep
 showing how the fixed-distance baseline's precision/recall/F1 change as its
 single operating point is varied — illustrating that the chosen

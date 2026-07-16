@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import os
 import tempfile
@@ -22,6 +23,8 @@ ADDITIVE_HISTORY_DEFAULTS = {
     "tca_boundary_flag": "",
     "object_1_catalog_id": "",
     "object_2_catalog_id": "",
+    "catalog_version": "",
+    "catalog_sha256": "",
 }
 
 
@@ -44,7 +47,13 @@ def parse_args() -> argparse.Namespace:
         default=config.preset,
         help="curated multi-orbit CATNR catalog used when --catnr/--group are not given",
     )
+    parser.set_defaults(catalog_sha256=config.catalog_sha256)
     parser.add_argument("--max-objects", type=int, default=config.max_objects, help="cap objects to control O(n^2) pair growth")
+    parser.add_argument(
+        "--catalog-version",
+        default=config.catalog_version,
+        help="frozen catalogue cohort identifier recorded in provenance/history",
+    )
     parser.add_argument(
         "--provider",
         choices=["auto", "celestrak", "space-track"],
@@ -82,6 +91,48 @@ def resolve_source(args: argparse.Namespace) -> tuple[list[str], list[str], str]
     if args.catnr or args.group:
         return args.catnr or [], args.group or [], "explicit"
     return list(PRESETS[args.preset]), [], f"preset:{args.preset}"
+
+
+def catalog_id_set_sha256(catalog_ids) -> str:
+    normalized = sorted({str(catalog_id).strip() for catalog_id in catalog_ids if str(catalog_id).strip()})
+    return hashlib.sha256("\n".join(normalized).encode("utf-8")).hexdigest()
+
+
+def validate_catalog_cohort(
+    args: argparse.Namespace,
+    catnrs: list[str],
+    groups: list[str],
+    source: str,
+    fetch_report: dict,
+) -> str:
+    """Return actual ID-set hash and fail closed for a frozen catalogue."""
+    returned_ids = list(fetch_report.get("catalog_ids", []))
+    actual_sha256 = catalog_id_set_sha256(returned_ids)
+    expected_sha256 = str(getattr(args, "catalog_sha256", "") or "")
+    if not expected_sha256:
+        return actual_sha256
+
+    requested_sha256 = catalog_id_set_sha256(catnrs)
+    expected_count = len(set(catnrs))
+    if (
+        source != f"preset:{args.preset}"
+        or groups
+        or getattr(args, "catnr", None)
+        or getattr(args, "group", None)
+        or args.max_objects != expected_count
+        or fetch_report.get("requested_count") != expected_count
+        or len(set(returned_ids)) != expected_count
+        or requested_sha256 != expected_sha256
+        or actual_sha256 != expected_sha256
+    ):
+        raise RuntimeError(
+            "Frozen catalogue cohort mismatch: authoritative runs require the exact "
+            f"{expected_count}-ID preset with sha256={expected_sha256}; "
+            f"source={source}, max_objects={args.max_objects}, "
+            f"requested={fetch_report.get('requested_count')}, returned={len(set(returned_ids))}, "
+            f"requested_sha256={requested_sha256}, returned_sha256={actual_sha256}"
+        )
+    return actual_sha256
 
 
 def write_provenance(path: Path, provenance: dict) -> None:
@@ -184,12 +235,15 @@ def collect_once(args: argparse.Namespace) -> int:
         provider=args.provider,
         report=fetch_report,
     )
+    catalog_sha256 = validate_catalog_cohort(args, catnrs, groups, source, fetch_report)
     objects = read_tles(snapshot_path)
 
     provenance = {
         "collection_id": stamp,
         "source": source,
         "preset": args.preset if source.startswith("preset:") else "",
+        "catalog_version": getattr(args, "catalog_version", "legacy-unspecified"),
+        "catalog_sha256": catalog_sha256,
         "fetched_utc": snapshot_utc.isoformat().replace("+00:00", "Z"),
         "object_count": len(objects),
         "tle_file": str(snapshot_path),
@@ -255,6 +309,8 @@ def collect_once(args: argparse.Namespace) -> int:
             "collection_id": stamp,
             "source": provenance["source"],
             "preset": provenance["preset"],
+            "catalog_version": provenance["catalog_version"],
+            "catalog_sha256": provenance["catalog_sha256"],
             "fetched_utc": provenance["fetched_utc"],
             "tle_file": str(snapshot_path),
             "object_count": str(len(objects)),

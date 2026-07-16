@@ -17,6 +17,7 @@ from sklearn.metrics import average_precision_score, roc_auc_score
 
 from space_debris.ml import (
     FEATURES,
+    FEATURES_WITHOUT_LABEL_RULE,
     REPORT_COLUMNS,
     _build_models,
     _canonical_pair_ids,
@@ -109,9 +110,12 @@ def test_compare_models_reports_pr_auc_and_roc_auc(tmp_path):
     report = compare_models(dataset_path, report_path, time_column=None)
 
     assert list(report.columns) == REPORT_COLUMNS
-    assert {"pr_auc", "roc_auc", "precision", "recall", "f1", "accuracy"} <= set(report.columns)
+    assert {
+        "pr_auc", "roc_auc", "precision", "recall", "f1", "accuracy",
+        "false_alarm_rate",
+    } <= set(report.columns)
     # With well-separated balanced classes every model (including the
-    # degenerate fixed_threshold "score") should have a defined PR-AUC.
+    # continuous distance-only baseline) should have a defined PR-AUC.
     assert report["pr_auc"].notna().all()
     assert report["roc_auc"].notna().all()
     assert report_path.exists()
@@ -144,6 +148,10 @@ def test_compare_models_quality_gate_rejects_single_class_grouped_partitions(tmp
 
     assert report["model"].tolist() == ["not_enough_data"]
     assert "must each contain both" in report.iloc[0]["note"]
+    assert report.iloc[0]["train_positive_rows"] == 0
+    assert report.iloc[0]["test_positive_rows"] > 0
+    assert report.iloc[0]["train_positive_pairs"] == 0
+    assert report.iloc[0]["test_positive_pairs"] > 0
 
 
 def test_canonical_pair_id_is_direction_independent():
@@ -267,6 +275,55 @@ def test_fixed_threshold_predictions_use_the_actual_grouped_test_rows(tmp_path):
     assert predictions["fixed_threshold"]["pred"].tolist() == split.test[
         "fixed_threshold_alarm"
     ].astype(int).tolist()
+    np.testing.assert_allclose(
+        predictions["fixed_threshold"]["scores"],
+        -split.test["min_distance_km"].astype(float).to_numpy(),
+    )
+
+
+def test_fixed_threshold_report_uses_continuous_distance_for_ranking(tmp_path):
+    df = _synthetic_dataset(200, seed=25)
+    initial_split = _pair_grouped_time_split(df, "snapshot_utc")
+    test_indices = initial_split.test.index.to_numpy()
+    pattern_distance = np.array([5.0, 10.0, 30.0, 40.0])
+    pattern_label = np.array([0, 1, 1, 0])
+    repeats = int(np.ceil(len(test_indices) / len(pattern_distance)))
+    test_distance = np.tile(pattern_distance, repeats)[: len(test_indices)]
+    test_labels = np.tile(pattern_label, repeats)[: len(test_indices)]
+    df.loc[test_indices, "min_distance_km"] = test_distance
+    df.loc[test_indices, "risk_label"] = test_labels
+    df.loc[test_indices, "fixed_threshold_alarm"] = (test_distance <= 25.0).astype(int)
+
+    dataset_path = tmp_path / "distance_baseline.csv"
+    report_path = tmp_path / "report.csv"
+    df.to_csv(dataset_path, index=False)
+
+    split = _pair_grouped_time_split(df, "snapshot_utc")
+    expected_pr_auc = average_precision_score(
+        split.test["risk_label"].astype(int),
+        -split.test["min_distance_km"].astype(float),
+    )
+    binary_alarm_pr_auc = average_precision_score(
+        split.test["risk_label"].astype(int),
+        split.test["fixed_threshold_alarm"].astype(int),
+    )
+    test_is_negative = split.test["risk_label"].astype(int).eq(0)
+    expected_false_alarm_rate = float(
+        split.test.loc[test_is_negative, "fixed_threshold_alarm"].astype(int).mean()
+    )
+    report = compare_models(
+        dataset_path,
+        report_path,
+        time_column="snapshot_utc",
+    )
+    baseline = report.loc[report["model"] == "fixed_threshold"].iloc[0]
+
+    assert expected_pr_auc != pytest.approx(binary_alarm_pr_auc)
+    assert baseline["pr_auc"] == pytest.approx(expected_pr_auc)
+    assert baseline["false_positive"] > 0
+    assert baseline["false_negative"] > 0
+    assert 0.0 < expected_false_alarm_rate < 1.0
+    assert baseline["false_alarm_rate"] == pytest.approx(expected_false_alarm_rate)
 
 
 def test_compare_to_baseline_pr_auc_reports_deltas():
@@ -298,6 +355,7 @@ def test_time_series_cv_report_aggregates_mean_and_std(tmp_path):
     report = time_series_cv_report(dataset_path, report_path, n_splits=3, time_column="snapshot_utc")
 
     assert {"model", "metric", "mean", "std", "folds"} <= set(report.columns)
+    assert "false_alarm_rate" in set(report["metric"])
     pr_auc_rows = report[(report["model"] == "random_forest") & (report["metric"] == "pr_auc")]
     assert len(pr_auc_rows) == 1
     row = pr_auc_rows.iloc[0]
@@ -330,10 +388,210 @@ def test_compare_models_missing_columns_raises(tmp_path):
         compare_models(dataset_path, tmp_path / "report.csv")
 
 
+def test_random_split_remains_compatible_without_pair_columns(tmp_path):
+    df = _synthetic_dataset(200, seed=31).drop(
+        columns=["object_1", "object_2", "snapshot_utc"]
+    )
+    dataset_path = tmp_path / "dataset.csv"
+    df.to_csv(dataset_path, index=False)
+
+    report = compare_models(dataset_path, tmp_path / "report.csv", time_column=None)
+
+    assert "not_enough_data" not in set(report["model"])
+    assert report["train_positive_pairs"].isna().all()
+    assert report["test_positive_pairs"].isna().all()
+    assert report["train_positive_snapshots"].isna().all()
+    assert report["test_positive_snapshots"].isna().all()
+
+
 def test_features_still_excludes_leakage_columns():
     assert "risk_score" not in FEATURES
     assert "risk_label" not in FEATURES
     assert "fixed_threshold_alarm" not in FEATURES
+
+
+def test_feature_ablation_removes_only_rule_defining_predictors(tmp_path):
+    removed = {
+        "min_distance_km",
+        "relative_velocity_km_s",
+        "relative_radial_km",
+        "relative_intrack_km",
+        "relative_crosstrack_km",
+    }
+    assert removed.isdisjoint(FEATURES_WITHOUT_LABEL_RULE)
+    assert set(FEATURES) - set(FEATURES_WITHOUT_LABEL_RULE) == removed
+
+    df = _synthetic_dataset(200, seed=26)
+    dataset_path = tmp_path / "ablation.csv"
+    df.to_csv(dataset_path, index=False)
+    full = compare_models(
+        dataset_path,
+        tmp_path / "full.csv",
+        time_column="snapshot_utc",
+    )
+    ablated = compare_models(
+        dataset_path,
+        tmp_path / "ablated.csv",
+        time_column="snapshot_utc",
+        feature_columns=FEATURES_WITHOUT_LABEL_RULE,
+    )
+
+    for column in (
+        "train_rows", "test_rows", "train_pairs", "test_pairs",
+        "excluded_rows", "cutoff_utc", "split",
+    ):
+        assert full[column].tolist() == ablated[column].tolist()
+
+    provenance = (tmp_path / "ablated.csv").read_text(encoding="utf-8").splitlines()
+    config_line = next(line for line in provenance if line.startswith("# config:"))
+    assert all(feature not in config_line for feature in removed)
+
+
+def test_compare_models_rejects_empty_feature_ablation(tmp_path):
+    df = _synthetic_dataset(20, seed=27)
+    dataset_path = tmp_path / "dataset.csv"
+    df.to_csv(dataset_path, index=False)
+
+    with pytest.raises(ValueError, match="feature_columns cannot be empty"):
+        compare_models(dataset_path, tmp_path / "report.csv", feature_columns=[])
+
+
+def test_publication_support_gate_fails_closed_and_reports_support(tmp_path):
+    df = _synthetic_dataset(200, seed=29)
+    dataset_path = tmp_path / "dataset.csv"
+    report_path = tmp_path / "report.csv"
+    df.to_csv(dataset_path, index=False)
+
+    report = compare_models(
+        dataset_path,
+        report_path,
+        time_column="snapshot_utc",
+        minimum_support={
+            "train_positive_rows": 1,
+            "test_positive_rows": 10_000,
+            "train_positive_pairs": 1,
+            "test_positive_pairs": 1,
+            "train_positive_snapshots": 1,
+            "test_positive_snapshots": 1,
+        },
+    )
+
+    assert report.iloc[0]["model"] == "not_enough_data"
+    assert "Publication quality gate failed" in report.iloc[0]["note"]
+    assert report.iloc[0]["train_positive_rows"] > 0
+    assert report.iloc[0]["test_positive_rows"] > 0
+    assert "test_positive_rows=" in report.iloc[0]["note"]
+    provenance = report_path.read_text(encoding="utf-8")
+    assert "minimum_support=" in provenance
+    assert "test_positive_rows:10000" in provenance
+
+
+def test_publication_gate_requires_full_observation_span(tmp_path):
+    df = _synthetic_dataset(200, seed=33)
+    dataset_path = tmp_path / "dataset.csv"
+    report_path = tmp_path / "report.csv"
+    df.to_csv(dataset_path, index=False)
+
+    report = compare_models(
+        dataset_path,
+        report_path,
+        time_column="snapshot_utc",
+        minimum_observation_span_days=10.0,
+    )
+
+    row = report.iloc[0]
+    assert row["model"] == "not_enough_data"
+    assert 8.0 < row["observation_span_days"] < 9.0
+    assert "observation_span_days=" in row["note"]
+    assert "minimum_observation_span_days=10.000000" in report_path.read_text(
+        encoding="utf-8"
+    )
+
+
+def test_frozen_catalog_gate_rejects_mixed_cohorts(tmp_path):
+    df = _synthetic_dataset(200, seed=34)
+    df["catalog_version"] = "iac26-75-v1"
+    df.loc[df.index[-1], "catalog_version"] = "legacy-v0"
+    dataset_path = tmp_path / "mixed.csv"
+    df.to_csv(dataset_path, index=False)
+
+    with pytest.raises(ValueError, match="Catalog cohort mismatch"):
+        compare_models(
+            dataset_path,
+            tmp_path / "report.csv",
+            time_column="snapshot_utc",
+            required_catalog_version="iac26-75-v1",
+        )
+
+
+def test_frozen_catalog_gate_rejects_wrong_id_set_hash(tmp_path):
+    df = _synthetic_dataset(200, seed=35)
+    df["catalog_version"] = "iac26-75-v1"
+    df["catalog_sha256"] = "wrong"
+    dataset_path = tmp_path / "wrong-hash.csv"
+    df.to_csv(dataset_path, index=False)
+
+    with pytest.raises(ValueError, match="Catalog ID-set hash mismatch"):
+        compare_models(
+            dataset_path,
+            tmp_path / "report.csv",
+            time_column="snapshot_utc",
+            required_catalog_version="iac26-75-v1",
+            required_catalog_sha256="expected",
+        )
+
+
+def test_publication_support_gate_accepts_sufficient_split(tmp_path):
+    df = _synthetic_dataset(200, seed=30)
+    dataset_path = tmp_path / "dataset.csv"
+    df.to_csv(dataset_path, index=False)
+
+    report = compare_models(
+        dataset_path,
+        tmp_path / "report.csv",
+        time_column="snapshot_utc",
+        minimum_support={key: 1 for key in (
+            "train_positive_rows",
+            "test_positive_rows",
+            "train_positive_pairs",
+            "test_positive_pairs",
+            "train_positive_snapshots",
+            "test_positive_snapshots",
+        )},
+    )
+
+    assert "not_enough_data" not in set(report["model"])
+    assert report["train_positive_rows"].min() > 0
+    assert report["test_positive_rows"].min() > 0
+
+
+@pytest.mark.parametrize("invalid", [True, 1.9, 0, -1])
+def test_minimum_support_rejects_non_positive_integer_values(tmp_path, invalid):
+    df = _synthetic_dataset(20, seed=32)
+    dataset_path = tmp_path / "dataset.csv"
+    df.to_csv(dataset_path, index=False)
+
+    with pytest.raises(ValueError, match="positive integers"):
+        compare_models(
+            dataset_path,
+            tmp_path / "report.csv",
+            minimum_support={"train_positive_rows": invalid},
+        )
+
+
+@pytest.mark.parametrize("forbidden", ["risk_label", "fixed_threshold_alarm", "risk_score"])
+def test_compare_models_rejects_direct_target_or_leakage_features(tmp_path, forbidden):
+    df = _synthetic_dataset(20, seed=28)
+    df["risk_score"] = np.linspace(0.0, 1.0, len(df))
+    dataset_path = tmp_path / "dataset.csv"
+    df.to_csv(dataset_path, index=False)
+
+    with pytest.raises(ValueError, match="forbidden target/leakage"):
+        compare_models(
+            dataset_path,
+            tmp_path / "report.csv",
+            feature_columns=[forbidden],
+        )
 
 
 def test_compare_models_embeds_provenance_header_and_stays_readable(tmp_path):

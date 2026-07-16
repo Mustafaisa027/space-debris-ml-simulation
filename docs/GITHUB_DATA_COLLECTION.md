@@ -11,7 +11,7 @@ Each workflow execution gets an immutable directory:
 
 ```text
 collections/github-run-RUN_ID-attempt-ATTEMPT/
-  history/conjunction_observations_v3.csv
+  history/conjunction_observations_iac26_75_v1.csv
   runs/TIMESTAMP/conjunction_dataset.csv
   runs/TIMESTAMP/identified_conjunctions.csv
   tle/tles_TIMESTAMP.txt
@@ -26,6 +26,14 @@ history, and simulation outputs exist before publishing anything.
 The first successful run creates `data-collection` automatically. Later runs
 append a new directory and never rewrite an earlier bundle. The workflow uses
 `concurrency` to ensure that only one collector writes at a time.
+
+The final IAC experiment begins with catalogue cohort
+`iac26-leo-mixed-75-v1`. Older local 5/43-object snapshots remain an audit
+archive but are excluded from this 60-day cohort by the sidecar
+`catalog_version` and exact catalog-ID-set SHA-256; they must not be mixed into
+the final model history. The authoritative collector rejects partial coverage
+even though non-frozen exploratory fetches may use the general 90% availability
+floor.
 
 ## Repository setting
 
@@ -63,7 +71,7 @@ repository activity; check the Actions page periodically.
 The current local archive should be imported once under a distinct prefix such
 as `historical/local-import-20260712/`, with its own SHA-256 manifest. Keep the
 local copy until file counts, total bytes, and sample hashes have been verified
-on GitHub. Do not append the growing 17.5 MB history CSV on every scheduled run;
+on GitHub. Do not append the growing history CSV on every scheduled run;
 the scheduled workflow intentionally stores independent per-run bundles.
 
 ## Failure policy

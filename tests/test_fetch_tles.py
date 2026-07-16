@@ -212,7 +212,9 @@ def test_leo_mixed_preset_registered_and_used_as_starlink_fallback():
     assert "leo_mixed" in fetch_tles.PRESETS
     catalog = fetch_tles.PRESETS["leo_mixed"]
     assert catalog == fetch_tles.LEO_MIXED_CATALOG
-    assert len(catalog) >= 5
+    assert len(catalog) == 75
+    assert len(set(catalog)) == 75
+    assert sum(name == "COSMOS 2251 DEB" for name in catalog.values()) == 32
     assert fetch_tles.GROUP_FALLBACK_CATALOGS["STARLINK"] == catalog
 
 

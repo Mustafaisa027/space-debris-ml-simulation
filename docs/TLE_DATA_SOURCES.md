@@ -8,6 +8,15 @@ the same strict TLE validator before any file is committed. Provider fallback
 improves availability; it does not make two independently measured datasets,
 because both ultimately distribute public US catalogue products.
 
+The authoritative `leo_mixed` preset contains 75 explicit five-digit NORAD
+IDs. Its 32 Cosmos 2251 fragments were selected from CelesTrak's official
+`COSMOS 2251 Debris` table on 2026-07-16 only when a current GP solution and
+perigee above 400 km were present. This dated selection must be revalidated
+before a later final collection; decayed/missing objects are not silently
+replaced with unrelated catalogue members. Frozen-cohort collection requires
+all 75 IDs exactly and records/verifies the sorted ID-set SHA-256
+`64c3d2329281da0e246226cb552aafe3b961c553c9487d7cfd9c96374aaa1f4c`.
+
 ## Sources considered
 
 | Source | Role in this project | Decision |

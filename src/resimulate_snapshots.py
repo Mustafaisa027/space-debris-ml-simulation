@@ -232,6 +232,8 @@ def main() -> None:
             label_threshold_km=config.label_threshold_km,
             label_relative_velocity_km_s=config.label_relative_velocity_km_s,
             included_collection_ids=requested_ids,
+            catalog_version=config.catalog_version,
+            catalog_sha256=config.catalog_sha256 or None,
         )
     report = {
         "generated_utc": generated_utc(),

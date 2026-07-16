@@ -7,6 +7,20 @@ from pathlib import Path
 
 
 DEFAULT_EXPERIMENT_CONFIG = Path("config/experiment_60_days.json")
+DEFAULT_QUALITY_GATE = {
+    "min_train_positive_rows": 30,
+    "min_test_positive_rows": 20,
+    "min_train_positive_pairs": 10,
+    "min_test_positive_pairs": 5,
+    "min_train_positive_snapshots": 5,
+    "min_test_positive_snapshots": 3,
+}
+
+
+def _positive_integer(value: object, field: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"{field} must be a positive integer")
+    return value
 
 
 @dataclass(frozen=True)
@@ -16,6 +30,8 @@ class ExperimentConfig:
     poll_interval_hours: float
     provider: str
     preset: str
+    catalog_version: str
+    catalog_sha256: str
     max_objects: int
     horizon_minutes: int
     step_minutes: int
@@ -31,6 +47,12 @@ class ExperimentConfig:
     train_time_fraction: float
     test_pair_fraction: float
     pair_seed: str
+    min_train_positive_rows: int
+    min_test_positive_rows: int
+    min_train_positive_pairs: int
+    min_test_positive_pairs: int
+    min_train_positive_snapshots: int
+    min_test_positive_snapshots: int
     snapshot_dir: str
     run_root: str
     history: str
@@ -49,6 +71,10 @@ def load_experiment_config(path: str | Path = DEFAULT_EXPERIMENT_CONFIG) -> Expe
         query = raw["default_query"]
         simulation = raw["simulation"]
         evaluation = raw["evaluation"]
+        quality_gate = {
+            **DEFAULT_QUALITY_GATE,
+            **evaluation.get("quality_gate", {}),
+        }
         outputs = raw["outputs"]
         config = ExperimentConfig(
             path=config_path,
@@ -56,6 +82,10 @@ def load_experiment_config(path: str | Path = DEFAULT_EXPERIMENT_CONFIG) -> Expe
             poll_interval_hours=float(raw["poll_interval_hours"]),
             provider=str(raw.get("provider", "auto")),
             preset=str(query["preset"]),
+            catalog_version=str(
+                query.get("catalog_version", f"{query['preset']}-legacy-unspecified")
+            ),
+            catalog_sha256=str(query.get("catalog_sha256", "")),
             max_objects=int(query["max_objects"]),
             horizon_minutes=int(simulation["horizon_minutes"]),
             step_minutes=int(simulation["step_minutes"]),
@@ -71,6 +101,24 @@ def load_experiment_config(path: str | Path = DEFAULT_EXPERIMENT_CONFIG) -> Expe
             train_time_fraction=float(evaluation["train_time_fraction"]),
             test_pair_fraction=float(evaluation["test_pair_fraction"]),
             pair_seed=str(evaluation["pair_seed"]),
+            min_train_positive_rows=_positive_integer(
+                quality_gate["min_train_positive_rows"], "min_train_positive_rows"
+            ),
+            min_test_positive_rows=_positive_integer(
+                quality_gate["min_test_positive_rows"], "min_test_positive_rows"
+            ),
+            min_train_positive_pairs=_positive_integer(
+                quality_gate["min_train_positive_pairs"], "min_train_positive_pairs"
+            ),
+            min_test_positive_pairs=_positive_integer(
+                quality_gate["min_test_positive_pairs"], "min_test_positive_pairs"
+            ),
+            min_train_positive_snapshots=_positive_integer(
+                quality_gate["min_train_positive_snapshots"], "min_train_positive_snapshots"
+            ),
+            min_test_positive_snapshots=_positive_integer(
+                quality_gate["min_test_positive_snapshots"], "min_test_positive_snapshots"
+            ),
             snapshot_dir=str(outputs["snapshots"]),
             run_root=str(outputs["runs"]),
             history=str(outputs["history"]),
@@ -125,6 +173,11 @@ def load_experiment_config(path: str | Path = DEFAULT_EXPERIMENT_CONFIG) -> Expe
         raise ValueError("candidate_threshold_km must include both fixed and proxy-label thresholds")
     if not 0 < config.train_time_fraction < 1 or not 0 < config.test_pair_fraction < 1:
         raise ValueError("evaluation split fractions must be between 0 and 1")
-    if not config.time_column or not config.pair_seed:
-        raise ValueError("evaluation time_column and pair_seed must be non-empty")
+    if not config.time_column or not config.pair_seed or not config.catalog_version:
+        raise ValueError("evaluation identity fields and catalog_version must be non-empty")
+    if not config.catalog_version.endswith("-legacy-unspecified"):
+        if len(config.catalog_sha256) != 64 or any(
+            character not in "0123456789abcdef" for character in config.catalog_sha256.lower()
+        ):
+            raise ValueError("frozen catalog_sha256 must be a 64-character hexadecimal digest")
     return config

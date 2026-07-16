@@ -14,6 +14,8 @@ METADATA_COLUMNS = [
     "collection_id",
     "source",
     "preset",
+    "catalog_version",
+    "catalog_sha256",
     "fetched_utc",
     "tle_file",
     "object_count",
@@ -69,12 +71,35 @@ def rebuild_latest_schema_history(
     label_threshold_km: float | None = None,
     label_relative_velocity_km_s: float | None = None,
     included_collection_ids: set[str] | None = None,
+    catalog_version: str | None = None,
+    catalog_sha256: str | None = None,
 ) -> dict:
     datasets = sorted(run_root.glob("*/conjunction_dataset.csv"))
     if included_collection_ids is not None:
         datasets = [path for path in datasets if path.parent.name in included_collection_ids]
     if not datasets:
         raise ValueError(f"No conjunction_dataset.csv files found below {run_root}")
+
+    cohort_skipped: list[str] = []
+    if catalog_version is not None:
+        cohort_datasets: list[Path] = []
+        for path in datasets:
+            collection_id = path.parent.name
+            sidecar = snapshot_dir / f"tles_{collection_id}.json"
+            provenance = json.loads(sidecar.read_text(encoding="utf-8")) if sidecar.exists() else {}
+            if (
+                provenance.get("catalog_version") == catalog_version
+                and (catalog_sha256 is None or provenance.get("catalog_sha256") == catalog_sha256)
+            ):
+                cohort_datasets.append(path)
+            else:
+                cohort_skipped.append(collection_id)
+        datasets = cohort_datasets
+    if not datasets:
+        raise ValueError(
+            "No conjunction datasets match frozen catalogue cohort "
+            f"version={catalog_version!r} sha256={catalog_sha256!r} below {run_root}"
+        )
 
     inspected = [(path, *read_dataset(path)) for path in datasets]
     latest_columns = max((columns for _, columns, _, _ in inspected), key=len)
@@ -131,6 +156,8 @@ def rebuild_latest_schema_history(
                         else provenance.get("source", comments.get("source", "unknown"))
                     ),
                     "preset": provenance.get("preset", ""),
+                    "catalog_version": provenance.get("catalog_version", ""),
+                    "catalog_sha256": provenance.get("catalog_sha256", ""),
                     "fetched_utc": resimulation.get(
                         "snapshot_utc",
                         provenance.get("fetched_utc", rows[0].get("snapshot_utc", "") if rows else ""),
@@ -182,6 +209,9 @@ def rebuild_latest_schema_history(
         "schema_columns": latest_columns,
         "included_runs": [path.parent.name for path, *_ in compatible],
         "skipped_incompatible_runs": skipped,
+        "skipped_catalog_version_runs": cohort_skipped,
+        "catalog_version": catalog_version,
+        "catalog_sha256": catalog_sha256,
         "filtered_non_independent_rows": filtered_non_independent,
         "filtered_non_candidate_rows": filtered_non_candidates,
         "rows_written": written,
@@ -221,6 +251,8 @@ def main() -> None:
         fixed_threshold_km=config.fixed_threshold_km,
         label_threshold_km=config.label_threshold_km,
         label_relative_velocity_km_s=config.label_relative_velocity_km_s,
+        catalog_version=config.catalog_version,
+        catalog_sha256=config.catalog_sha256 or None,
     )
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")

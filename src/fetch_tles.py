@@ -30,11 +30,12 @@ DEFAULT_OBJECTS = {
 
 # CelesTrak's GROUP endpoint (e.g. GROUP=STARLINK) has been observed to return
 # HTTP 403 even for small requests, while the per-object CATNR endpoint stays
-# reachable. LEO_MIXED_CATALOG is a curated fallback: 43 long-lived, publicly
+# reachable. LEO_MIXED_CATALOG is a curated fallback: 75 long-lived, publicly
 # documented objects spanning inclinations from ~28 deg to ~98 deg (sun-
 # synchronous weather/earth-observation satellites, ISS/CSS and cargo
 # traffic, ocean-altimetry and polar-orbiting science missions, and the
-# Iridium 33 debris field from the 2009 Iridium 33 / Kosmos 2251 collision)
+# debris objects from both sides of the 2009 Iridium 33 / Cosmos 2251
+# collision)
 # so their orbital planes actually cross, unlike a single constellation whose
 # satellites share near-identical planes and altitudes. Docked/same-platform
 # modules and crew/cargo vehicles (POISK, ISS NAUKA, Crew Dragon, Progress-MS,
@@ -86,6 +87,41 @@ LEO_MIXED_CATALOG: dict[str, str] = {
     "34079": "IRIDIUM 33 DEB",       # ~86.4 deg, Iridium 33 collision debris
     "34088": "IRIDIUM 33 DEB",       # ~86.4 deg, Iridium 33 collision debris
     "34521": "IRIDIUM 33 DEB",       # ~86.4 deg, Iridium 33 collision debris
+    # Cosmos 2251 fragments: ~74 deg. Selected from the official CelesTrak
+    # COSMOS 2251 debris table on 2026-07-16; each had a current GP solution,
+    # perigee above 400 km, and a five-digit catalogue ID.
+    "33757": "COSMOS 2251 DEB",
+    "33758": "COSMOS 2251 DEB",
+    "33760": "COSMOS 2251 DEB",
+    "33761": "COSMOS 2251 DEB",
+    "33762": "COSMOS 2251 DEB",
+    "33764": "COSMOS 2251 DEB",
+    "33765": "COSMOS 2251 DEB",
+    "33766": "COSMOS 2251 DEB",
+    "33768": "COSMOS 2251 DEB",
+    "33779": "COSMOS 2251 DEB",
+    "33819": "COSMOS 2251 DEB",
+    "33821": "COSMOS 2251 DEB",
+    "33822": "COSMOS 2251 DEB",
+    "33823": "COSMOS 2251 DEB",
+    "33825": "COSMOS 2251 DEB",
+    "33826": "COSMOS 2251 DEB",
+    "33828": "COSMOS 2251 DEB",
+    "33830": "COSMOS 2251 DEB",
+    "33832": "COSMOS 2251 DEB",
+    "33835": "COSMOS 2251 DEB",
+    "33836": "COSMOS 2251 DEB",
+    "33837": "COSMOS 2251 DEB",
+    "33838": "COSMOS 2251 DEB",
+    "33839": "COSMOS 2251 DEB",
+    "33911": "COSMOS 2251 DEB",
+    "33912": "COSMOS 2251 DEB",
+    "33913": "COSMOS 2251 DEB",
+    "33914": "COSMOS 2251 DEB",
+    "33915": "COSMOS 2251 DEB",
+    "33916": "COSMOS 2251 DEB",
+    "33917": "COSMOS 2251 DEB",
+    "33920": "COSMOS 2251 DEB",
 }
 
 # Name lookup used when labelling any fetched TLE block.

@@ -88,18 +88,28 @@ python src/collect_observations.py --once
 # 60-day background collection (see scripts/ for Windows Task Scheduler helpers)
 python src/collect_observations.py --days 60 --interval-hours 2
 
-# pair-held-out, time-ordered evaluation over the clean v3 history
+# rebuild corrected-TCA history from immutable snapshots
+python src/resimulate_snapshots.py --config config/experiment_60_days.json
+
+# pair-held-out, time-ordered evaluation over corrected-TCA history
 python src/train_from_history.py
 ```
+
+The training command defaults to the corrected frozen-cohort
+`conjunction_observations_resimulated_iac26_75_v1.csv`, not the live collector
+history or the older mixed 5/43/75-object archive.
+It writes the canonical full-feature comparison and a separate
+`*_without_label_rule_features.csv` ablation that removes minimum distance,
+relative velocity, and the three RIC position components whose norm reconstructs
+minimum distance. The ablation uses the identical held-out pair/time split and
+exposes how much performance comes from directly recovering the transparent
+proxy-label rule.
 
 If an older checkout already accumulated history, rebuild the schema-safe
 version from immutable run outputs before training:
 
 ```bash
 python src/rebuild_history.py
-
-# after a TCA algorithm change, re-run immutable snapshots with one config
-python src/resimulate_snapshots.py --config config/experiment_60_days.json
 ```
 
 TLE input is fail-closed: malformed/checksum-invalid responses and catalogue
@@ -114,14 +124,26 @@ bundles to a separate `data-collection` branch. Setup instructions are in
 [`docs/GITHUB_DATA_COLLECTION.md`](docs/GITHUB_DATA_COLLECTION.md).
 
 `config/experiment_60_days.json` is the authoritative source for collection,
-simulation thresholds, v3 history, and report paths. CLI flags can override it
+simulation thresholds, the `iac26-leo-mixed-75-v1` cohort, and report paths.
+CLI flags can override it
 for explicit one-off experiments, and those values are recorded in provenance.
+
+GitHub runs scheduled workflows only from the repository's default branch.
+Therefore `.github/workflows/collect_observations.yml` must be merged into
+`main` before the two-hour collector can start automatically. After merging,
+enable Actions if necessary, trigger one manual smoke run, and verify that the
+`data-collection` branch receives a new immutable `collections/github-run-*`
+bundle. Keeping the workflow only on a feature branch does not start the
+60-day experiment.
 
 `train_from_history.py` assigns canonical object pairs deterministically with
 SHA-256, then trains only on train-pair observations before a complete snapshot
 cutoff and tests only on held-out-pair observations after it. Cross-quadrant
 rows are excluded and counted. This simultaneously prevents future leakage,
 pair memorization, and splitting one snapshot block across train and test.
+The configured publication gate also requires minimum positive support across
+rows, independent catalogue pairs, and snapshots; insufficient data produces a
+`not_enough_data` report instead of an unstable model claim.
 
 Before exact TCA refinement, the maintained pipeline applies a conservative
 coarse screen from `space_debris.encounters`. On a separate vectorized 30-second grid,

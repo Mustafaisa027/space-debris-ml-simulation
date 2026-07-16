@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
+from numbers import Integral
 from pathlib import Path
+from typing import Sequence
 
 import numpy as np
 import pandas as pd
@@ -24,22 +26,21 @@ from sklearn.tree import DecisionTreeClassifier
 from space_debris.provenance import write_csv_text_with_provenance
 
 
-# NOTE: ``risk_score`` and the raw label-defining columns are intentionally
-# absent. The ground-truth label (risk_label) is a function of min_distance_km
-# and relative_velocity_km_s, so a learner is given those physical predictors
-# and must recover the decision boundary itself. ``risk_score`` is excluded
-# because it is a monotone transform of the same quantities and would leak the
-# target. This is what lets the ML models be compared fairly against the
-# fixed-distance baseline.
+# NOTE: ``risk_score``, ``risk_label`` and ``fixed_threshold_alarm`` are
+# intentionally absent. The proxy label is a function of min_distance_km and
+# relative_velocity_km_s; the canonical model receives those two physical
+# predictors and measures recovery of that transparent rule. ``risk_score`` is
+# excluded because it is a monotone transform of the same quantities and would
+# add a duplicate target proxy. A separately reported feature ablation removes
+# the two rule-defining predictors to quantify how much performance survives.
 #
 # The relative_*/radial_velocity/tangential_velocity/approach_angle features
 # (ROADMAP_YOL1.md GOREV 5) are geometric decompositions computed from the
-# position/velocity VECTORS, not rescalings of the label-defining scalars:
-# the RIC components describe orientation (radial/in-track/cross-track), not
-# magnitude; radial/tangential velocity and approach_angle are evaluated at
-# snapshot time rather than at TCA; and relative_inclination_deg is pure
-# orbital-plane geometry. None of them is a duplicate or monotone transform
-# of min_distance_km / relative_velocity_km_s.
+# position/velocity vectors. Individually, the RIC components describe
+# direction, but their joint Euclidean norm reconstructs ``min_distance_km``;
+# the strict feature ablation therefore removes the entire RIC position trio.
+# Radial/tangential velocity and approach_angle are evaluated at snapshot time
+# rather than at TCA, and relative_inclination_deg is orbital-plane geometry.
 FEATURES = [
     "time_to_tca_min",
     "current_distance_km",
@@ -56,6 +57,36 @@ FEATURES = [
     "approach_angle_deg",
 ]
 
+FEATURES_WITHOUT_LABEL_RULE = [
+    feature
+    for feature in FEATURES
+    if feature
+    not in {
+        "min_distance_km",
+        "relative_velocity_km_s",
+        "relative_radial_km",
+        "relative_intrack_km",
+        "relative_crosstrack_km",
+    }
+]
+
+FORBIDDEN_MODEL_FEATURES = frozenset(
+    {"risk_label", "fixed_threshold_alarm", "risk_score"}
+)
+
+
+def _validated_feature_columns(feature_columns: Sequence[str] | None) -> list[str]:
+    selected = list(FEATURES if feature_columns is None else feature_columns)
+    if not selected:
+        raise ValueError("feature_columns cannot be empty")
+    duplicates = sorted({feature for feature in selected if selected.count(feature) > 1})
+    if duplicates:
+        raise ValueError(f"feature_columns contains duplicates: {duplicates}")
+    forbidden = sorted(set(selected) & FORBIDDEN_MODEL_FEATURES)
+    if forbidden:
+        raise ValueError(f"feature_columns contains forbidden target/leakage columns: {forbidden}")
+    return selected
+
 # Reported for every model. pr_auc/roc_auc lead the report and are the
 # metrics the paper leans on; accuracy is kept for context but is
 # deliberately NOT the headline -- with rare positives, a model that always
@@ -69,6 +100,7 @@ REPORT_COLUMNS = [
     "recall",
     "f1",
     "accuracy",
+    "false_alarm_rate",
     "false_positive",
     "false_negative",
     "true_positive",
@@ -77,6 +109,13 @@ REPORT_COLUMNS = [
     "test_rows",
     "train_pairs",
     "test_pairs",
+    "train_positive_rows",
+    "test_positive_rows",
+    "train_positive_pairs",
+    "test_positive_pairs",
+    "train_positive_snapshots",
+    "test_positive_snapshots",
+    "observation_span_days",
     "excluded_rows",
     "cutoff_utc",
     "split",
@@ -100,6 +139,72 @@ class SplitResult:
     excluded: pd.DataFrame
     split_name: str
     metadata: dict[str, object]
+
+
+SUPPORT_KEYS = (
+    "train_positive_rows",
+    "test_positive_rows",
+    "train_positive_pairs",
+    "test_positive_pairs",
+    "train_positive_snapshots",
+    "test_positive_snapshots",
+)
+
+
+def _positive_partition_support(
+    frame: pd.DataFrame,
+    time_column: str | None,
+) -> dict[str, int | None]:
+    positive = frame.loc[frame["risk_label"].astype(int).eq(1)]
+    if positive.empty:
+        return {"rows": 0, "pairs": 0, "snapshots": 0}
+    has_pair_identity = all(column in positive.columns for column in PAIR_COLUMNS)
+    pairs = int(_canonical_pair_ids(positive).nunique()) if has_pair_identity else None
+    snapshots = (
+        int(_validated_times(positive, time_column).nunique())
+        if time_column
+        else None
+    )
+    return {"rows": int(len(positive)), "pairs": pairs, "snapshots": snapshots}
+
+
+def _split_positive_support(
+    split: SplitResult,
+    time_column: str | None,
+) -> dict[str, int | None]:
+    train = _positive_partition_support(split.train, time_column)
+    test = _positive_partition_support(split.test, time_column)
+    return {
+        "train_positive_rows": train["rows"],
+        "test_positive_rows": test["rows"],
+        "train_positive_pairs": train["pairs"],
+        "test_positive_pairs": test["pairs"],
+        "train_positive_snapshots": train["snapshots"],
+        "test_positive_snapshots": test["snapshots"],
+    }
+
+
+def _observation_span_days(df: pd.DataFrame, time_column: str | None) -> float | None:
+    if not time_column or df.empty:
+        return None
+    timestamps = _validated_times(df, time_column)
+    return float((timestamps.max() - timestamps.min()).total_seconds() / 86400.0)
+
+
+def _validated_minimum_support(
+    minimum_support: dict[str, int] | None,
+) -> dict[str, int]:
+    if minimum_support is None:
+        return {}
+    unknown = sorted(set(minimum_support) - set(SUPPORT_KEYS))
+    if unknown:
+        raise ValueError(f"Unknown minimum-support keys: {unknown}")
+    if any(
+        isinstance(value, bool) or not isinstance(value, Integral) or value <= 0
+        for value in minimum_support.values()
+    ):
+        raise ValueError("minimum-support values must be positive integers")
+    return {key: int(value) for key, value in minimum_support.items()}
 
 
 def _canonical_pair_ids(df: pd.DataFrame) -> pd.Series:
@@ -242,6 +347,18 @@ def _ranking_score(model, x_test):
     return model.predict(x_test)
 
 
+def _distance_baseline_score(test: pd.DataFrame) -> np.ndarray:
+    """Continuous ranking score for the classical distance-only baseline.
+
+    Smaller miss distance means higher conjunction risk, hence the negative
+    sign.  The configured fixed-distance alarm remains the baseline's binary
+    operating point for precision/recall/F1 and confusion counts; using the
+    continuous distance here keeps PR-AUC/ROC-AUC meaningful instead of
+    reducing the ranking to two score levels.
+    """
+    return -test["min_distance_km"].astype(float).to_numpy()
+
+
 def _ranking_metrics(y_true, scores) -> tuple[float | None, float | None, str]:
     """average_precision_score / roc_auc_score are undefined with a single
     class in y_true; report None with a note instead of letting sklearn raise.
@@ -304,6 +421,7 @@ def _not_enough_data_row(model: str, note: str, train_rows=None, test_rows=None,
         "recall": None,
         "f1": None,
         "accuracy": None,
+        "false_alarm_rate": None,
         "false_positive": None,
         "false_negative": None,
         "true_positive": None,
@@ -312,6 +430,13 @@ def _not_enough_data_row(model: str, note: str, train_rows=None, test_rows=None,
         "test_rows": test_rows,
         "train_pairs": None,
         "test_pairs": None,
+        "train_positive_rows": None,
+        "test_positive_rows": None,
+        "train_positive_pairs": None,
+        "test_positive_pairs": None,
+        "train_positive_snapshots": None,
+        "test_positive_snapshots": None,
+        "observation_span_days": None,
         "excluded_rows": None,
         "cutoff_utc": None,
         "split": split,
@@ -319,14 +444,21 @@ def _not_enough_data_row(model: str, note: str, train_rows=None, test_rows=None,
     }
 
 
-def _evaluate_split(split: SplitResult, split_name: str | None = None) -> list[dict]:
+def _evaluate_split(
+    split: SplitResult,
+    split_name: str | None = None,
+    feature_columns: Sequence[str] = FEATURES,
+    time_column: str | None = None,
+    observation_span_days: float | None = None,
+) -> list[dict]:
     """Fit every model on one train/test split and score it. Shared by the
     single chronological split (compare_models) and each fold of
     TimeSeriesSplit cross-validation (time_series_cv_report).
     """
     train = split.train
     test = split.test
-    x_train, x_test = train[FEATURES], test[FEATURES]
+    feature_columns = _validated_feature_columns(feature_columns)
+    x_train, x_test = train[feature_columns], test[feature_columns]
     y_train = train["risk_label"].astype(int)
     y_test = test["risk_label"].astype(int)
     split_name = split_name or split.split_name
@@ -336,25 +468,27 @@ def _evaluate_split(split: SplitResult, split_name: str | None = None) -> list[d
 
     models = _build_models(scale_pos_weight)
     trainable = y_train.nunique() >= 2
+    support = _split_positive_support(split, time_column)
+    support["observation_span_days"] = observation_span_days
 
     rows: list[dict] = []
     for name, model in models.items():
         if name == "fixed_threshold":
-            # Purely distance-based baseline: no training required. Its
-            # binary alarm doubles as a (degenerate, two-level) ranking
-            # score so PR-AUC/ROC-AUC stay comparable across all models.
+            # Purely distance-based baseline: no training required. The
+            # configured alarm is its operating point; continuous negative
+            # miss distance is its ranking score for PR-AUC/ROC-AUC.
             pred = test["fixed_threshold_alarm"].astype(int).to_numpy()
-            scores = pred
+            scores = _distance_baseline_score(test)
         elif not trainable:
-            rows.append(
-                _not_enough_data_row(
-                    name,
-                    "Training split had a single class; model skipped.",
-                    train_rows=int(len(y_train)),
-                    test_rows=int(len(y_test)),
-                    split=split_name,
-                )
+            row = _not_enough_data_row(
+                name,
+                "Training split had a single class; model skipped.",
+                train_rows=int(len(y_train)),
+                test_rows=int(len(y_test)),
+                split=split_name,
             )
+            row.update(**support)
+            rows.append(row)
             continue
         else:
             model.fit(x_train, y_train)
@@ -366,6 +500,7 @@ def _evaluate_split(split: SplitResult, split_name: str | None = None) -> list[d
             y_test, pred, average="binary", zero_division=0
         )
         tn, fp, fn, tp = confusion_matrix(y_test, pred, labels=[0, 1]).ravel()
+        false_alarm_rate = float(fp / (fp + tn)) if (fp + tn) else None
         rows.append(
             {
                 "model": name,
@@ -375,6 +510,7 @@ def _evaluate_split(split: SplitResult, split_name: str | None = None) -> list[d
                 "recall": recall,
                 "f1": f1,
                 "accuracy": accuracy_score(y_test, pred),
+                "false_alarm_rate": false_alarm_rate,
                 "false_positive": int(fp),
                 "false_negative": int(fn),
                 "true_positive": int(tp),
@@ -383,6 +519,7 @@ def _evaluate_split(split: SplitResult, split_name: str | None = None) -> list[d
                 "test_rows": int(len(y_test)),
                 "train_pairs": split.metadata.get("train_pairs"),
                 "test_pairs": split.metadata.get("test_pairs"),
+                **support,
                 "excluded_rows": split.metadata.get("excluded_rows", len(split.excluded)),
                 "cutoff_utc": split.metadata.get("cutoff_utc"),
                 "split": split_name,
@@ -391,25 +528,25 @@ def _evaluate_split(split: SplitResult, split_name: str | None = None) -> list[d
         )
 
     if "xgboost" not in models:
-        rows.append(
-            _not_enough_data_row(
-                "xgboost",
-                "xgboost is not installed.",
-                train_rows=int(len(y_train)),
-                test_rows=int(len(y_test)),
-                split=split_name,
-            )
+        row = _not_enough_data_row(
+            "xgboost",
+            "xgboost is not installed.",
+            train_rows=int(len(y_train)),
+            test_rows=int(len(y_test)),
+            split=split_name,
         )
+        row.update(**support)
+        rows.append(row)
     if "lightgbm" not in models:
-        rows.append(
-            _not_enough_data_row(
-                "lightgbm",
-                "lightgbm is not installed.",
-                train_rows=int(len(y_train)),
-                test_rows=int(len(y_test)),
-                split=split_name,
-            )
+        row = _not_enough_data_row(
+            "lightgbm",
+            "lightgbm is not installed.",
+            train_rows=int(len(y_train)),
+            test_rows=int(len(y_test)),
+            split=split_name,
         )
+        row.update(**support)
+        rows.append(row)
 
     return rows
 
@@ -464,7 +601,7 @@ def model_predictions_for_plotting(
     for name, model in models.items():
         if name == "fixed_threshold":
             pred = test["fixed_threshold_alarm"].astype(int).to_numpy()
-            scores = pred
+            scores = _distance_baseline_score(test)
             fitted_model = None
         elif not trainable:
             continue
@@ -486,9 +623,9 @@ def model_predictions_for_plotting(
 
 def compare_to_baseline_pr_auc(report: pd.DataFrame) -> str:
     """Human-readable PR-AUC comparison of each model against the classical
-    fixed-distance baseline -- the paper's central question is whether ML
-    beats a naive threshold on the imbalanced screening set, and PR-AUC (not
-    accuracy) is the metric that actually answers it under class imbalance.
+    distance-only ranking baseline.  Its binary fixed-distance operating point
+    is still used for confusion counts; PR-AUC uses continuous negative miss
+    distance so the ranking comparison is not reduced to two score levels.
     """
     if "fixed_threshold" not in report["model"].values:
         return "fixed_threshold baseline not present in report."
@@ -518,16 +655,88 @@ def compare_models(
     train_time_fraction: float = 0.75,
     test_pair_fraction: float = 0.25,
     pair_seed: str = PAIR_SPLIT_SEED,
+    feature_columns: Sequence[str] | None = None,
+    minimum_support: dict[str, int] | None = None,
+    minimum_observation_span_days: float | None = None,
+    required_catalog_version: str | None = None,
+    required_catalog_sha256: str | None = None,
 ) -> pd.DataFrame:
     df = pd.read_csv(dataset_path, comment="#")
-    missing = [feature for feature in FEATURES + ["risk_label", "fixed_threshold_alarm"] if feature not in df.columns]
+    selected_features = _validated_feature_columns(feature_columns)
+    required_support = _validated_minimum_support(minimum_support)
+    if minimum_observation_span_days is not None:
+        minimum_observation_span_days = float(minimum_observation_span_days)
+        if not np.isfinite(minimum_observation_span_days) or minimum_observation_span_days <= 0:
+            raise ValueError("minimum_observation_span_days must be positive and finite")
+        if not time_column:
+            raise ValueError("minimum_observation_span_days requires time_column")
+    missing = [
+        feature
+        for feature in selected_features + ["risk_label", "fixed_threshold_alarm", "min_distance_km"]
+        if feature not in df.columns
+    ]
     if missing:
         raise ValueError(f"Dataset is missing required columns: {missing}")
+    if required_catalog_version is not None:
+        if "catalog_version" not in df.columns:
+            raise ValueError("Frozen-cohort evaluation requires catalog_version column")
+        observed_versions = sorted(
+            value for value in df["catalog_version"].dropna().astype(str).str.strip().unique()
+            if value
+        )
+        if observed_versions != [required_catalog_version]:
+            raise ValueError(
+                "Catalog cohort mismatch: "
+                f"required={required_catalog_version!r}, observed={observed_versions!r}"
+            )
+    if required_catalog_sha256 is not None:
+        if "catalog_sha256" not in df.columns:
+            raise ValueError("Frozen-cohort evaluation requires catalog_sha256 column")
+        observed_hashes = sorted(
+            value for value in df["catalog_sha256"].dropna().astype(str).str.strip().unique()
+            if value
+        )
+        if observed_hashes != [required_catalog_sha256]:
+            raise ValueError(
+                "Catalog ID-set hash mismatch: "
+                f"required={required_catalog_sha256!r}, observed={observed_hashes!r}"
+            )
+    pair_support_requested = any(
+        key in required_support
+        for key in ("train_positive_pairs", "test_positive_pairs")
+    )
+    if pair_support_requested:
+        missing_pair = [column for column in PAIR_COLUMNS if column not in df.columns]
+        if missing_pair:
+            raise ValueError(
+                f"Positive-pair minimum support requires pair columns: {missing_pair}"
+            )
+    snapshot_support_requested = any(
+        key in required_support
+        for key in ("train_positive_snapshots", "test_positive_snapshots")
+    )
+    if snapshot_support_requested and not time_column:
+        raise ValueError("Positive-snapshot minimum support requires time_column")
 
     if not source:
         source = f"dataset={dataset_path}"
     if not config_summary:
         config_summary = f"time_column={time_column}"
+    config_summary = f"{config_summary}, features={'|'.join(selected_features)}"
+    if required_support:
+        support_summary = "|".join(
+            f"{key}:{required_support[key]}" for key in SUPPORT_KEYS if key in required_support
+        )
+        config_summary = f"{config_summary}, minimum_support={support_summary}"
+    if minimum_observation_span_days is not None:
+        config_summary = (
+            f"{config_summary}, minimum_observation_span_days="
+            f"{minimum_observation_span_days:.6f}"
+        )
+    if required_catalog_version is not None:
+        config_summary = f"{config_summary}, catalog_version={required_catalog_version}"
+    if required_catalog_sha256 is not None:
+        config_summary = f"{config_summary}, catalog_sha256={required_catalog_sha256}"
 
     if df.empty or df["risk_label"].nunique() < 2 or len(df) < 6:
         report = pd.DataFrame(
@@ -548,6 +757,9 @@ def compare_models(
         report = pd.DataFrame([_not_enough_data_row("not_enough_data", str(exc))])
         write_csv_text_with_provenance(report_path, report.to_csv(index=False), source, config_summary)
         return report
+    support = _split_positive_support(split, time_column)
+    observation_span_days = _observation_span_days(df, time_column)
+    support["observation_span_days"] = observation_span_days
     train_classes = split.train["risk_label"].nunique()
     test_classes = split.test["risk_label"].nunique()
     if train_classes < 2 or test_classes < 2:
@@ -563,11 +775,45 @@ def compare_models(
             test_pairs=split.metadata.get("test_pairs"),
             excluded_rows=split.metadata.get("excluded_rows"),
             cutoff_utc=split.metadata.get("cutoff_utc"),
+            **support,
         )
         report = pd.DataFrame([row])[REPORT_COLUMNS]
         write_csv_text_with_provenance(report_path, report.to_csv(index=False), source, config_summary)
         return report
-    rows = _evaluate_split(split)
+    support_failures = [
+        f"{key}={support[key]} < required={minimum}"
+        for key, minimum in required_support.items()
+        if support[key] < minimum
+    ]
+    if (
+        minimum_observation_span_days is not None
+        and observation_span_days < minimum_observation_span_days
+    ):
+        support_failures.append(
+            f"observation_span_days={observation_span_days:.6f} < "
+            f"required={minimum_observation_span_days:.6f}"
+        )
+    if support_failures:
+        note = "Publication quality gate failed: " + "; ".join(support_failures)
+        row = _not_enough_data_row(
+            "not_enough_data", note, len(split.train), len(split.test), split.split_name
+        )
+        row.update(
+            train_pairs=split.metadata.get("train_pairs"),
+            test_pairs=split.metadata.get("test_pairs"),
+            excluded_rows=split.metadata.get("excluded_rows"),
+            cutoff_utc=split.metadata.get("cutoff_utc"),
+            **support,
+        )
+        report = pd.DataFrame([row])[REPORT_COLUMNS]
+        write_csv_text_with_provenance(report_path, report.to_csv(index=False), source, config_summary)
+        return report
+    rows = _evaluate_split(
+        split,
+        feature_columns=selected_features,
+        time_column=time_column,
+        observation_span_days=observation_span_days,
+    )
 
     report = pd.DataFrame(rows)[REPORT_COLUMNS]
     write_csv_text_with_provenance(report_path, report.to_csv(index=False), source, config_summary)
@@ -584,6 +830,7 @@ def time_series_cv_report(
     config_summary: str = "",
     test_pair_fraction: float = 0.25,
     pair_seed: str = PAIR_SPLIT_SEED,
+    feature_columns: Sequence[str] | None = None,
 ) -> pd.DataFrame:
     """Pair-held-out expanding-window validation over whole timestamp blocks.
 
@@ -593,7 +840,12 @@ def time_series_cv_report(
     both pair memorization and future leakage.
     """
     df = pd.read_csv(dataset_path, comment="#")
-    missing = [feature for feature in FEATURES + ["risk_label", "fixed_threshold_alarm"] if feature not in df.columns]
+    selected_features = _validated_feature_columns(feature_columns)
+    missing = [
+        feature
+        for feature in selected_features + ["risk_label", "fixed_threshold_alarm", "min_distance_km"]
+        if feature not in df.columns
+    ]
     if missing:
         raise ValueError(f"Dataset is missing required columns: {missing}")
     if time_column not in df.columns:
@@ -603,6 +855,7 @@ def time_series_cv_report(
         source = f"dataset={dataset_path}"
     if not config_summary:
         config_summary = f"time_column={time_column}, n_splits={n_splits}"
+    config_summary = f"{config_summary}, features={'|'.join(selected_features)}"
 
     if len(df) < n_splits + 1 or df["risk_label"].nunique() < 2:
         report = pd.DataFrame(
@@ -655,7 +908,11 @@ def time_series_cv_report(
         )
         valid_partitions += 1
         fold_rows.extend(
-            _evaluate_split(split)
+            _evaluate_split(
+                split,
+                feature_columns=selected_features,
+                time_column=time_column,
+            )
         )
 
     if not fold_rows:
@@ -667,7 +924,10 @@ def time_series_cv_report(
         return report
 
     fold_df = pd.DataFrame(fold_rows)
-    metrics = ["pr_auc", "roc_auc", "precision", "recall", "f1", "accuracy"]
+    metrics = [
+        "pr_auc", "roc_auc", "precision", "recall", "f1", "accuracy",
+        "false_alarm_rate",
+    ]
 
     agg_rows: list[dict] = []
     for model_name, group in fold_df.groupby("model"):
