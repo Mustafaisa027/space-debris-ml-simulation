@@ -12,31 +12,62 @@ from space_debris.core import (
     write_distance_timeseries,
     write_pair_results,
 )
+from space_debris.experiment import DEFAULT_EXPERIMENT_CONFIG, load_experiment_config
 from space_debris.ml import compare_models, compare_to_baseline_pr_auc
 from space_debris.plots import create_pipeline_plots, create_publication_plots, create_top_pair_physical_plots
 from space_debris.provenance import png_provenance_metadata
 
 
+def _resolve_pair_satellites(satellites, pair):
+    """Resolve a result pair by NORAD ID; names are not unique for debris."""
+    by_catalog_id = {str(satellite.model.satnum): satellite for satellite in satellites}
+    if pair.object_1_catalog_id and pair.object_2_catalog_id:
+        try:
+            return (
+                by_catalog_id[str(pair.object_1_catalog_id)],
+                by_catalog_id[str(pair.object_2_catalog_id)],
+            )
+        except KeyError as exc:
+            raise ValueError(f"Pair references unknown NORAD catalogue ID: {exc.args[0]}") from exc
+
+    def unique_name(name):
+        matches = [satellite for satellite in satellites if satellite.name == name]
+        if len(matches) != 1:
+            raise ValueError(
+                f"Cannot resolve non-unique/missing satellite name {name!r}; catalogue IDs are required"
+            )
+        return matches[0]
+
+    return unique_name(pair.object_1), unique_name(pair.object_2)
+
+
 def parse_args() -> argparse.Namespace:
+    config_parser = argparse.ArgumentParser(add_help=False)
+    config_parser.add_argument("--config", default=str(DEFAULT_EXPERIMENT_CONFIG))
+    config_args, _ = config_parser.parse_known_args()
+    config = load_experiment_config(config_args.config)
+
     parser = argparse.ArgumentParser(description="LEO conjunction simulation pipeline")
+    parser.add_argument("--config", default=str(config.path), help="authoritative experiment JSON")
     parser.add_argument("--tle", default="data/sample_tles.txt", help="3-line TLE file")
     parser.add_argument("--outputs", default="outputs/pipeline", help="output directory")
-    parser.add_argument("--horizon-minutes", type=int, default=720)
-    parser.add_argument("--step-minutes", type=int, default=5)
-    parser.add_argument("--leo-min-altitude-km", type=float, default=160.0)
-    parser.add_argument("--leo-max-altitude-km", type=float, default=2000.0)
+    parser.add_argument("--horizon-minutes", type=int, default=config.horizon_minutes)
+    parser.add_argument("--step-minutes", type=int, default=config.step_minutes)
+    parser.add_argument("--screening-step-seconds", type=float, default=config.screening_step_seconds)
+    parser.add_argument("--leo-min-altitude-km", type=float, default=config.leo_min_altitude_km)
+    parser.add_argument("--leo-max-altitude-km", type=float, default=config.leo_max_altitude_km)
     # Physical conjunction-screening scales (km). Operational SSA screening
     # volumes are a few km; these are widened for a sparse public-TLE demo but
     # are still physically interpretable, unlike the previous 3000-10000 km.
-    parser.add_argument("--candidate-threshold-km", type=float, default=50.0,
+    parser.add_argument("--candidate-threshold-km", type=float, default=config.candidate_threshold_km,
                         help="keep pairs whose closest approach is within this radius")
-    parser.add_argument("--fixed-threshold-km", type=float, default=25.0,
+    parser.add_argument("--fixed-threshold-km", type=float, default=config.fixed_threshold_km,
                         help="classical baseline: alarm if min distance <= this")
-    parser.add_argument("--label-threshold-km", type=float, default=20.0,
+    parser.add_argument("--label-threshold-km", type=float, default=config.label_threshold_km,
                         help="ground-truth screening radius for risk_label")
-    parser.add_argument("--label-relative-velocity-km-s", type=float, default=10.0,
+    parser.add_argument("--label-relative-velocity-km-s", type=float, default=config.label_relative_velocity_km_s,
                         help="ground-truth: risky only if v_rel >= this at TCA")
-    parser.add_argument("--max-tle-age-hours", type=float, default=336.0,
+    parser.add_argument("--max-tle-age-hours", type=float, default=config.max_tle_age_hours,
                         help="warn if any TLE epoch is older than this (default 14 days)")
     return parser.parse_args()
 
@@ -50,6 +81,7 @@ def main() -> None:
     satellites = build_satellites(objects)
     start_utc = datetime.now(timezone.utc).replace(microsecond=0)
 
+    screening_report: dict = {}
     rows = simulate_pairs(
         satellites=satellites,
         start_utc=start_utc,
@@ -61,8 +93,12 @@ def main() -> None:
         label_threshold_km=args.label_threshold_km,
         label_relative_velocity_km_s=args.label_relative_velocity_km_s,
         max_tle_age_hours=args.max_tle_age_hours,
+        candidate_screening_threshold_km=args.candidate_threshold_km,
+        screening_step_seconds=args.screening_step_seconds,
+        screening_report=screening_report,
     )
     conjunctions = filter_conjunctions(rows, args.candidate_threshold_km)
+    screening_report["exact_candidates"] = len(conjunctions)
 
     dataset_path = output_dir / "conjunction_dataset.csv"
     conjunction_path = output_dir / "identified_conjunctions.csv"
@@ -73,6 +109,7 @@ def main() -> None:
     source = f"tle={args.tle}"
     config_summary = (
         f"horizon={args.horizon_minutes}min step={args.step_minutes}min "
+        f"screening_step={args.screening_step_seconds}s "
         f"label_threshold_km={args.label_threshold_km} "
         f"label_relative_velocity_km_s={args.label_relative_velocity_km_s} "
         f"candidate_threshold_km={args.candidate_threshold_km} "
@@ -101,11 +138,11 @@ def main() -> None:
     )
 
     if rows:
-        satellites_by_name = {sat.name: sat for sat in satellites}
         top = rows[0]
+        top_satellite_1, top_satellite_2 = _resolve_pair_satellites(satellites, top)
         physical_plots = create_top_pair_physical_plots(
-            satellites_by_name[top.object_1],
-            satellites_by_name[top.object_2],
+            top_satellite_1,
+            top_satellite_2,
             start_utc,
             args.horizon_minutes,
             args.step_minutes,
@@ -113,8 +150,8 @@ def main() -> None:
         )
         write_distance_timeseries(
             top_pair_timeseries_path,
-            satellites_by_name[top.object_1],
-            satellites_by_name[top.object_2],
+            top_satellite_1,
+            top_satellite_2,
             start_utc,
             args.horizon_minutes,
             args.step_minutes,
@@ -143,8 +180,9 @@ def main() -> None:
             print(f"Plot skipped: {exc}")
 
     print("=== SPACE DEBRIS PIPELINE OK ===")
+    print(f"Screening -> {screening_report}")
     print(f"TLE objects             : {len(objects)}")
-    print(f"LEO pairs simulated     : {len(rows)}")
+    print(f"Pairs exact-refined     : {len(rows)}")
     print(f"Identified conjunctions : {len(conjunctions)}")
     print(f"Dataset                 : {dataset_path}")
     print(f"Conjunctions            : {conjunction_path}")

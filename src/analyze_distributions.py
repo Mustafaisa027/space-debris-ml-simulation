@@ -16,6 +16,8 @@ import argparse
 import json
 from pathlib import Path
 
+from space_debris.experiment import DEFAULT_EXPERIMENT_CONFIG, load_experiment_config
+
 from space_debris.provenance import generated_utc, git_commit_hash
 
 import matplotlib
@@ -38,6 +40,7 @@ DEFAULT_VELOCITY_PERCENTILES = (50, 60, 70, 75, 80, 85, 90, 95, 99)
 # Below this many rows, a calibration is reported but flagged unreliable --
 # it describes a statistical fluke, not the shape of the true distribution.
 MIN_ROWS_FOR_RELIABLE_CALIBRATION = 200
+DEFAULT_MAX_PHYSICAL_DISTANCE_KM = 50.0
 
 
 def load_history(path: Path) -> pd.DataFrame:
@@ -84,6 +87,7 @@ def calibrate_thresholds(
     target_high: float = 0.15,
     distance_percentiles=DEFAULT_DISTANCE_PERCENTILES,
     velocity_percentiles=DEFAULT_VELOCITY_PERCENTILES,
+    max_distance_km: float = DEFAULT_MAX_PHYSICAL_DISTANCE_KM,
 ) -> dict:
     """Grid-search (label_threshold_km, label_relative_velocity_km_s) so that
     P(min_distance_km <= d AND relative_velocity_km_s >= v) lands inside
@@ -100,7 +104,7 @@ def calibrate_thresholds(
 
     candidates = []
     for dp in distance_percentiles:
-        d_thresh = float(np.percentile(distance, dp))
+        d_thresh = min(float(np.percentile(distance, dp)), max_distance_km)
         for vp in velocity_percentiles:
             v_thresh = float(np.percentile(velocity, vp))
             positive_rate = float(np.mean((distance <= d_thresh) & (velocity >= v_thresh)))
@@ -123,25 +127,32 @@ def calibrate_thresholds(
         best = min(candidates, key=lambda c: abs(c["positive_rate"] - midpoint))
         within_target = False
 
-    reliable = n >= MIN_ROWS_FOR_RELIABLE_CALIBRATION
+    reliable = n >= MIN_ROWS_FOR_RELIABLE_CALIBRATION and within_target
 
     rationale = (
-        f"label_threshold_km = {best['distance_percentile']}th percentile of observed "
+        f"label_threshold_km = distance percentile {best['distance_percentile']} of observed "
         f"min_distance_km ({best['label_threshold_km']:.3f} km); "
-        f"label_relative_velocity_km_s = {best['velocity_percentile']}th percentile of observed "
+        f"label_relative_velocity_km_s = velocity percentile {best['velocity_percentile']} of observed "
         f"relative_velocity_km_s ({best['label_relative_velocity_km_s']:.3f} km/s). "
         f"Joint positive rate on n={n} pairs: {best['positive_rate'] * 100:.2f}% "
-        f"(target [{target_low * 100:.0f}%, {target_high * 100:.0f}%])."
+        f"(target [{target_low * 100:.0f}%, {target_high * 100:.0f}%]); "
+        f"distance threshold capped at the physical screening limit of {max_distance_km:.3f} km."
     )
     if not within_target:
         rationale += (
             " No grid combination reached the target range; reporting the closest "
             "achievable combination instead."
         )
-    if not reliable:
+    if n < MIN_ROWS_FOR_RELIABLE_CALIBRATION:
         rationale += (
             f" WARNING: only {n} rows available (< {MIN_ROWS_FOR_RELIABLE_CALIBRATION}); "
             "treat as illustrative only and re-run once more history has accumulated."
+        )
+    elif not within_target:
+        rationale += (
+            " WARNING: row count is sufficient, but no physically bounded threshold "
+            "produced the target positive rate; collect a denser/more representative "
+            "catalogue instead of widening the distance definition."
         )
 
     return {
@@ -150,6 +161,7 @@ def calibrate_thresholds(
         "within_target": within_target,
         "target_positive_rate_low": target_low,
         "target_positive_rate_high": target_high,
+        "max_physical_distance_km": max_distance_km,
         "distance_percentile_used": best["distance_percentile"],
         "velocity_percentile_used": best["velocity_percentile"],
         "label_threshold_km": best["label_threshold_km"],
@@ -233,14 +245,20 @@ def write_calibration_report(path: Path, history_path: Path, summary: dict, cali
 
 
 def parse_args() -> argparse.Namespace:
+    config_parser = argparse.ArgumentParser(add_help=False)
+    config_parser.add_argument("--config", default=str(DEFAULT_EXPERIMENT_CONFIG))
+    config_args, _ = config_parser.parse_known_args()
+    config = load_experiment_config(config_args.config)
     parser = argparse.ArgumentParser(
         description="Analyze accumulated conjunction history and suggest physically-defensible label thresholds"
     )
-    parser.add_argument("--history", default="outputs/history/conjunction_observations.csv")
+    parser.add_argument("--config", default=str(config.path))
+    parser.add_argument("--history", default=config.resimulated_history)
     parser.add_argument("--output", default="config/threshold_calibration.json")
     parser.add_argument("--plots-dir", default="outputs/history")
     parser.add_argument("--target-positive-rate-low", type=float, default=0.02)
     parser.add_argument("--target-positive-rate-high", type=float, default=0.15)
+    parser.add_argument("--max-physical-distance-km", type=float, default=DEFAULT_MAX_PHYSICAL_DISTANCE_KM)
     return parser.parse_args()
 
 
@@ -254,6 +272,7 @@ def main() -> None:
         df,
         target_low=args.target_positive_rate_low,
         target_high=args.target_positive_rate_high,
+        max_distance_km=args.max_physical_distance_km,
     )
     plots = plot_distributions(df, Path(args.plots_dir), calibration)
     write_calibration_report(Path(args.output), history_path, summary, calibration)

@@ -1,4 +1,4 @@
-"""Unit tests for space_debris.plots: provenance-embedded PNGs and the four
+"""Unit tests for space_debris.plots: provenance-embedded PNGs and the five
 publication-ready figures (ROADMAP_YOL1.md GOREV 6).
 
 Run with:  PYTHONPATH=src python -m pytest tests/ -q
@@ -12,7 +12,7 @@ import pytest
 from PIL import Image
 
 from space_debris import plots
-from space_debris.ml import compare_models
+from space_debris.ml import _canonical_pair_ids, _pair_is_test, compare_models
 
 
 def _synthetic_dataset(n: int, seed: int = 0) -> pd.DataFrame:
@@ -38,6 +38,9 @@ def _synthetic_dataset(n: int, seed: int = 0) -> pd.DataFrame:
             "approach_angle_deg": rng.uniform(0.0, 180.0, n),
             "fixed_threshold_alarm": (min_distance <= 25.0).astype(int),
             "risk_label": labels,
+            "snapshot_utc": pd.date_range("2026-01-01", periods=n, freq="h").astype(str),
+            "object_1": [f"OBJECT-{i:05d}" for i in range(n)],
+            "object_2": [f"TARGET-{i:05d}" for i in range(n)],
         }
     )
 
@@ -69,7 +72,7 @@ def test_publication_plots_render_on_balanced_dataset(tmp_path):
 
     outputs = plots.create_publication_plots(dataset_path, tmp_path, current_threshold_km=25.0)
 
-    assert len(outputs) == 4
+    assert len(outputs) == 5
     for path in outputs:
         assert path.exists()
         assert path.stat().st_size > 0
@@ -87,6 +90,29 @@ def test_publication_plots_skip_gracefully_on_single_class_dataset(tmp_path):
 
     # Must not crash; simply produces no publication figures for this dataset.
     assert outputs == []
+
+
+def test_threshold_sensitivity_uses_same_held_out_future_test_partition(tmp_path):
+    df = _synthetic_dataset(200, seed=8)
+    pair_ids = _canonical_pair_ids(df)
+    df["risk_label"] = [int(_pair_is_test(pair, 0.25, "iac26-pair-split-v1")) for pair in pair_ids]
+    assert df["risk_label"].nunique() == 2
+    dataset_path = tmp_path / "dataset.csv"
+    output_path = tmp_path / "threshold.png"
+    df.to_csv(dataset_path, index=False)
+
+    plots.plot_threshold_sensitivity(
+        dataset_path,
+        output_path,
+        time_column="snapshot_utc",
+        train_time_fraction=0.75,
+        test_pair_fraction=0.25,
+        pair_seed="iac26-pair-split-v1",
+    )
+
+    # The held-out future test partition is single-class, so no misleading
+    # full-dataset threshold curve may be produced.
+    assert not output_path.exists()
 
 
 def test_plot_model_metrics_reads_report_with_provenance_header(tmp_path):

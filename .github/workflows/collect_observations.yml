@@ -1,0 +1,91 @@
+name: Collect TLE observations
+
+on:
+  schedule:
+    # UTC; avoid the busy top of the hour. CelesTrak refreshes about every 2 hours.
+    - cron: "17 */2 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tle-observation-collector
+  cancel-in-progress: false
+
+jobs:
+  collect-and-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      COLLECTION_ROOT: staging/collection
+      DATA_BRANCH: data-collection
+      SPACETRACK_IDENTITY: ${{ secrets.SPACETRACK_IDENTITY }}
+      SPACETRACK_PASSWORD: ${{ secrets.SPACETRACK_PASSWORD }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-collector.txt
+
+      - name: Install collector dependencies
+        run: python -m pip install -r requirements-collector.txt
+
+      - name: Collect one observation bundle
+        run: |
+          python src/collect_observations.py \
+            --once \
+            --config config/experiment_60_days.json \
+            --provider auto \
+            --snapshot-dir "$COLLECTION_ROOT/tle" \
+            --run-root "$COLLECTION_ROOT/runs" \
+            --history "$COLLECTION_ROOT/history/conjunction_observations_iac26_75_v1.csv"
+
+      - name: Verify collection output
+        run: |
+          test -s "$COLLECTION_ROOT/history/conjunction_observations_iac26_75_v1.csv"
+          test "$(find "$COLLECTION_ROOT/tle" -type f -name '*.txt' | wc -l)" -ge 1
+          test "$(find "$COLLECTION_ROOT/runs" -type f -name 'conjunction_dataset.csv' | wc -l)" -ge 1
+
+      - name: Build integrity manifest
+        run: python src/build_collection_manifest.py "$COLLECTION_ROOT"
+
+      - name: Publish bundle to the data branch
+        env:
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git ls-remote --exit-code --heads origin "$DATA_BRANCH" >/dev/null 2>&1; then
+            git fetch origin "$DATA_BRANCH"
+            git worktree add --detach data-store "origin/$DATA_BRANCH"
+          else
+            git worktree add --detach data-store HEAD
+            cd data-store
+            git switch --orphan "$DATA_BRANCH"
+            git rm -rf .
+            printf '%s\n' '# Space Debris Observation Archive' \
+              '' 'Generated automatically by GitHub Actions. See the main branch for source code.' > README.md
+            cd ..
+          fi
+
+          destination="data-store/collections/github-run-${RUN_ID}-attempt-${RUN_ATTEMPT}"
+          mkdir -p "$destination"
+          cp -R "$COLLECTION_ROOT"/. "$destination"/
+
+          cd data-store
+          git add collections README.md 2>/dev/null || git add collections
+          if git diff --cached --quiet; then
+            echo "No new collection data to publish."
+            exit 0
+          fi
+          git commit -m "data: add observation run ${RUN_ID} attempt ${RUN_ATTEMPT}"
+          git push origin HEAD:"$DATA_BRANCH"

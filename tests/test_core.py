@@ -5,18 +5,29 @@ Run with:  PYTHONPATH=src python -m pytest tests/ -q
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import math
+from datetime import datetime, timedelta, timezone
+from itertools import combinations
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
+from skyfield.api import load
 
 from space_debris.core import (
     PairResult,
     _altitude_km,
+    _bounded_min_search,
+    _coarse_offsets_seconds,
     _distance_km,
     _encounter_geometry_features,
+    _global_interval_min_search,
+    _iso_z,
+    _refine_tca,
     _risk_label,
+    _to_skyfield_time,
+    _to_skyfield_time_precise,
     build_satellites,
     read_tles,
     simulate_pairs,
@@ -167,6 +178,8 @@ def test_simulate_pairs_smoke():
     assert r.min_distance_km <= r.current_distance_km + 1e-6
     assert r.relative_velocity_km_s >= 0.0
     assert r.risk_label in (0, 1)
+    assert r.object_1_catalog_id.isdigit()
+    assert r.object_2_catalog_id.isdigit()
 
     # GOREV 5 geometry features: sane ranges and internal consistency.
     assert 0.0 <= r.relative_inclination_deg <= 180.0
@@ -174,6 +187,294 @@ def test_simulate_pairs_smoke():
     assert r.tangential_velocity_km_s >= 0.0
     ric_magnitude = (r.relative_radial_km**2 + r.relative_intrack_km**2 + r.relative_crosstrack_km**2) ** 0.5
     assert ric_magnitude == pytest.approx(r.min_distance_km, abs=1e-6)
+
+
+def test_bounded_min_search_matches_analytic_linear_encounter():
+    # Standard short-duration conjunction approximation: near TCA, relative
+    # motion is well approximated as a straight line r(t) = r0 + v*t, which
+    # makes d(t) an exact quadratic with a closed-form minimum. Here the
+    # relative velocity is purely along -y, so the y-separation is nulled at
+    # t* = 40/15 s, leaving the x-separation (30 km) as the true minimum
+    # distance -- both known exactly by construction, not just numerically.
+    r0 = np.array([30.0, 40.0, 0.0])
+    v = np.array([0.0, -15.0, 0.0])
+    t_star = float(-np.dot(r0, v) / np.dot(v, v))
+    d_star = float(np.linalg.norm(r0 + v * t_star))
+    assert d_star == pytest.approx(30.0)
+
+    def distance_fn(offset_s: float) -> float:
+        return float(np.linalg.norm(r0 + v * offset_s))
+
+    offset_s, distance_km, boundary_flag = _bounded_min_search(
+        distance_fn, lower_s=t_star - 300.0, upper_s=t_star + 300.0,
+    )
+
+    assert abs(offset_s - t_star) <= 1.0
+    assert abs(distance_km - d_star) <= 0.1
+    assert boundary_flag is False
+
+
+def test_bounded_min_search_flags_boundary_when_true_minimum_outside_window():
+    # Same analytic encounter as above, but the search window is narrowed to
+    # [0, 1] s, well short of the true t* (~2.67 s). Distance is strictly
+    # decreasing across the whole window, so the optimizer must land on the
+    # upper edge -- exactly the "true minimum may be outside the window"
+    # case the boundary flag exists to catch.
+    r0 = np.array([30.0, 40.0, 0.0])
+    v = np.array([0.0, -15.0, 0.0])
+
+    def distance_fn(offset_s: float) -> float:
+        return float(np.linalg.norm(r0 + v * offset_s))
+
+    offset_s, _distance_km, boundary_flag = _bounded_min_search(
+        distance_fn, lower_s=0.0, upper_s=1.0,
+    )
+
+    assert offset_s == pytest.approx(1.0, abs=0.1)
+    assert boundary_flag is True
+
+
+@pytest.mark.parametrize(
+    ("distance_fn", "expected_offset"),
+    [
+        (lambda offset_s: offset_s, 0.0),
+        (lambda offset_s: 60.0 - offset_s, 60.0),
+    ],
+)
+def test_bounded_min_search_keeps_exact_start_and_end_minima(distance_fn, expected_offset):
+    offset_s, distance_km, boundary_flag = _bounded_min_search(distance_fn, 0.0, 60.0)
+
+    assert offset_s == expected_offset
+    assert distance_km == 0.0
+    assert 0.0 <= offset_s <= 60.0
+    assert boundary_flag is True
+
+
+def test_precise_skyfield_conversion_and_iso_preserve_microseconds():
+    class RecordingTimescale:
+        def utc(self, year, month, day, hour, minute, second):
+            return year, month, day, hour, minute, second
+
+    dt = datetime(2026, 7, 1, 12, 34, 56, 789123, tzinfo=timezone.utc)
+
+    converted = _to_skyfield_time_precise(RecordingTimescale(), dt)
+
+    assert converted[-1] == pytest.approx(56.789123, abs=1e-9)
+    assert _iso_z(dt, preserve_microseconds=True) == "2026-07-01T12:34:56.789123Z"
+
+
+def test_refine_tca_delegates_full_simulation_horizon(monkeypatch):
+    captured = {}
+
+    def fake_search(_distance_fn, horizon_s, step_s, xatol_s=0.1):
+        captured.update(horizon_s=horizon_s, step_s=step_s, xatol_s=xatol_s)
+        return horizon_s, 5.0, True
+
+    monkeypatch.setattr("space_debris.core._global_interval_min_search", fake_search)
+    start = datetime(2026, 7, 1, tzinfo=timezone.utc)
+
+    tca, distance_km, boundary_flag = _refine_tca(
+        object(), object(), object(), start,
+        step_minutes=5.0,
+        horizon_minutes=12.0,
+    )
+
+    assert captured["horizon_s"] == 12.0 * 60.0
+    assert captured["step_s"] == 5.0 * 60.0
+    assert tca == start + timedelta(minutes=12)
+    assert distance_km == 5.0
+    assert boundary_flag is True
+
+
+def test_global_interval_search_finds_narrow_minimum_missed_by_single_window():
+    # Coarse samples at 0, 10, 20 and 30 seconds see the broad minimum at
+    # t=10 (distance 2). A genuinely closer but narrow minimum at t=25 lies
+    # between two coarse samples whose distances are both worse. The former
+    # single-window strategy searched only [0, 20] around the coarse winner.
+    def distance_fn(offset_s: float) -> float:
+        broad_minimum = 2.0 + ((offset_s - 10.0) / 10.0) ** 2
+        narrow_minimum = 0.5 + ((offset_s - 25.0) / 1.0) ** 2
+        return min(broad_minimum, narrow_minimum)
+
+    coarse_offsets = _coarse_offsets_seconds(horizon_s=30.0, step_s=10.0)
+    coarse_winner = min(coarse_offsets, key=distance_fn)
+    old_offset, old_distance, _ = _bounded_min_search(
+        distance_fn,
+        max(0.0, coarse_winner - 10.0),
+        min(30.0, coarse_winner + 10.0),
+    )
+
+    new_offset, new_distance, boundary_flag = _global_interval_min_search(
+        distance_fn,
+        horizon_s=30.0,
+        step_s=10.0,
+    )
+
+    assert old_offset == pytest.approx(10.0, abs=0.1)
+    assert old_distance == pytest.approx(2.0, abs=0.1)
+    assert new_offset == pytest.approx(25.0, abs=0.1)
+    assert new_distance == pytest.approx(0.5, abs=0.1)
+    assert new_distance < old_distance
+    assert boundary_flag is False
+
+
+def test_global_interval_search_refines_final_short_interval(monkeypatch):
+    searched_intervals = []
+    real_search = _bounded_min_search
+
+    def recording_search(distance_fn, lower_s, upper_s, xatol_s=0.1):
+        searched_intervals.append((lower_s, upper_s))
+        return real_search(distance_fn, lower_s, upper_s, xatol_s)
+
+    monkeypatch.setattr("space_debris.core._bounded_min_search", recording_search)
+
+    offset_s, distance_km, boundary_flag = _global_interval_min_search(
+        lambda value: (value - 10.5) ** 2,
+        horizon_s=11.0,
+        step_s=5.0,
+    )
+
+    assert searched_intervals == [(0.0, 5.0), (5.0, 10.0), (10.0, 11.0)]
+    assert offset_s == pytest.approx(10.5, abs=0.1)
+    assert distance_km == pytest.approx(0.0, abs=0.01)
+    assert boundary_flag is True  # within one second of the real horizon
+
+
+@pytest.mark.parametrize(
+    ("distance_fn", "expected_offset"),
+    [
+        (lambda offset_s: offset_s, 0.0),
+        (lambda offset_s: 20.0 - offset_s, 20.0),
+    ],
+)
+def test_global_interval_search_flags_only_real_simulation_boundaries(distance_fn, expected_offset):
+    offset_s, distance_km, boundary_flag = _global_interval_min_search(
+        distance_fn,
+        horizon_s=20.0,
+        step_s=10.0,
+    )
+
+    assert offset_s == expected_offset
+    assert distance_km == 0.0
+    assert boundary_flag is True
+
+
+def test_global_interval_search_does_not_flag_internal_interval_boundary():
+    offset_s, distance_km, boundary_flag = _global_interval_min_search(
+        lambda value: abs(value - 10.0),
+        horizon_s=20.0,
+        step_s=10.0,
+    )
+
+    assert offset_s == 10.0
+    assert distance_km == 0.0
+    assert boundary_flag is False
+
+
+def test_global_interval_search_never_worse_than_its_coarse_grid():
+    distance_fn = lambda value: 4.0 + math.sin(value / 3.0) + ((value - 17.0) / 20.0) ** 2
+    coarse_offsets = _coarse_offsets_seconds(horizon_s=23.0, step_s=5.0)
+    coarse_best = min(distance_fn(offset_s) for offset_s in coarse_offsets)
+
+    offset_s, refined_distance, _ = _global_interval_min_search(
+        distance_fn,
+        horizon_s=23.0,
+        step_s=5.0,
+    )
+
+    assert 0.0 <= offset_s <= 23.0
+    assert refined_distance <= coarse_best
+
+
+@pytest.mark.parametrize(
+    ("horizon_s", "step_s", "message"),
+    [(-1.0, 5.0, "horizon must be non-negative"), (10.0, 0.0, "step must be positive")],
+)
+def test_global_interval_search_rejects_invalid_grid(horizon_s, step_s, message):
+    with pytest.raises(ValueError, match=message):
+        _global_interval_min_search(lambda value: value, horizon_s, step_s)
+
+
+def test_refined_tca_never_worse_than_coarse_grid_only():
+    # Regression test for the missed-close-approach bug: rebuild the OLD
+    # coarse-grid-only minimum (sampling every step_minutes and nothing
+    # else) independently, and confirm the pipeline's refined min_distance_km
+    # is never larger than it -- refinement must only ever tighten the
+    # estimate, never loosen it.
+    objs = read_tles(DEMO_TLE)[:8]
+    sats = build_satellites(objs)
+    start = datetime(2026, 7, 1, tzinfo=timezone.utc)
+    horizon_minutes, step_minutes = 30, 5
+
+    rows = simulate_pairs(
+        sats, start, horizon_minutes=horizon_minutes, step_minutes=step_minutes,
+        leo_min_altitude_km=160, leo_max_altitude_km=2000,
+        fixed_threshold_km=50, label_threshold_km=200,
+        label_relative_velocity_km_s=5,
+    )
+    assert rows
+    by_pair = {(r.object_1, r.object_2): r for r in rows}
+
+    ts = load.timescale()
+    checked = 0
+    for sat1, sat2 in combinations(sats, 2):
+        key = (sat1.name, sat2.name)
+        if key not in by_pair:
+            continue
+        checked += 1
+
+        coarse_best = _distance_km(
+            sat1.at(_to_skyfield_time(ts, start)).position.km,
+            sat2.at(_to_skyfield_time(ts, start)).position.km,
+        )
+        for offset in range(0, horizon_minutes + 1, step_minutes):
+            t = _to_skyfield_time(ts, start + timedelta(minutes=offset))
+            coarse_best = min(coarse_best, _distance_km(sat1.at(t).position.km, sat2.at(t).position.km))
+
+        assert by_pair[key].min_distance_km <= coarse_best + 1e-6
+
+    assert checked > 0
+
+
+def test_conservative_pair_screening_preserves_all_exact_candidates():
+    objs = read_tles(DEMO_TLE)[:6]
+    sats = build_satellites(objs)
+    start = datetime(2026, 7, 1, tzinfo=timezone.utc)
+    kwargs = dict(
+        satellites=sats,
+        start_utc=start,
+        horizon_minutes=15,
+        step_minutes=5,
+        leo_min_altitude_km=160,
+        leo_max_altitude_km=2000,
+        fixed_threshold_km=50,
+        label_threshold_km=200,
+        label_relative_velocity_km_s=5,
+    )
+    exact = simulate_pairs(**kwargs)
+    report = {}
+    screened = simulate_pairs(
+        **kwargs,
+        candidate_screening_threshold_km=2000.0,
+        screening_report=report,
+    )
+
+    exact_candidates = {
+        tuple(sorted((row.object_1, row.object_2))): row
+        for row in exact
+        if row.min_distance_km <= 2000.0
+    }
+    screened_by_pair = {
+        tuple(sorted((row.object_1, row.object_2))): row for row in screened
+    }
+
+    assert set(exact_candidates) <= set(screened_by_pair)
+    for pair, exact_row in exact_candidates.items():
+        assert screened_by_pair[pair].min_distance_km == pytest.approx(
+            exact_row.min_distance_km, abs=1e-6
+        )
+    assert report["total_pairs"] >= report["refined_pairs"]
+    assert report["screened_pairs"] + report["refined_pairs"] == report["total_pairs"]
 
 
 def _make_pair_result(**overrides) -> PairResult:
@@ -208,7 +509,13 @@ def _make_pair_result(**overrides) -> PairResult:
 
 
 def test_write_pair_results_embeds_provenance_header(tmp_path):
-    rows = [_make_pair_result()]
+    rows = [
+        _make_pair_result(
+            tca_utc="2026-07-01T00:10:00.123456Z",
+            time_to_tca_min=10.0020576,
+            tca_boundary_flag=1,
+        )
+    ]
     path = tmp_path / "conjunction_dataset.csv"
 
     write_pair_results(path, rows, source="leo_mixed preset", config_summary="horizon=720min")
@@ -224,6 +531,9 @@ def test_write_pair_results_embeds_provenance_header(tmp_path):
     assert len(df) == 1
     assert df.iloc[0]["object_1"] == "SAT-A"
     assert df.iloc[0]["risk_label"] == 1
+    assert df.iloc[0]["tca_utc"] == "2026-07-01T00:10:00.123456Z"
+    assert df.iloc[0]["time_to_tca_min"] == pytest.approx(10.0020576, abs=1e-9)
+    assert df.iloc[0]["tca_boundary_flag"] == 1
 
 
 def test_write_pair_results_without_provenance_args_still_readable(tmp_path):
@@ -236,3 +546,4 @@ def test_write_pair_results_without_provenance_args_still_readable(tmp_path):
 
     df = pd.read_csv(path, comment="#")
     assert len(df) == 1
+    assert df.iloc[0]["tca_boundary_flag"] == 0

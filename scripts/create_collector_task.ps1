@@ -9,7 +9,7 @@ $End = $Start.AddDays(60)
 
 $Action = New-ScheduledTaskAction `
   -Execute $Python `
-  -Argument "`"$Script`" --once --history `"outputs\history\conjunction_observations.csv`"" `
+  -Argument "`"$Script`" --once --config `"config\experiment_60_days.json`"" `
   -WorkingDirectory $Root
 
 $Trigger = New-ScheduledTaskTrigger `

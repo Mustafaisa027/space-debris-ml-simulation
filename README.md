@@ -88,20 +88,80 @@ python src/collect_observations.py --once
 # 60-day background collection (see scripts/ for Windows Task Scheduler helpers)
 python src/collect_observations.py --days 60 --interval-hours 2
 
-# time-ordered train/test evaluation over the accumulated history
+# rebuild corrected-TCA history from immutable snapshots
+python src/resimulate_snapshots.py --config config/experiment_60_days.json
+
+# pair-held-out, time-ordered evaluation over corrected-TCA history
 python src/train_from_history.py
 ```
 
-`train_from_history.py` uses a chronological split (train on earlier snapshots,
-test on later ones), which is the honest way to evaluate a forecasting-style
-classifier and avoids the optimism of a random split on correlated rows.
+The training command defaults to the corrected frozen-cohort
+`conjunction_observations_resimulated_iac26_75_v1.csv`, not the live collector
+history or the older mixed 5/43/75-object archive.
+It writes the canonical full-feature comparison and a separate
+`*_without_label_rule_features.csv` ablation that removes minimum distance,
+relative velocity, and the three RIC position components whose norm reconstructs
+minimum distance. The ablation uses the identical held-out pair/time split and
+exposes how much performance comes from directly recovering the transparent
+proxy-label rule.
+
+If an older checkout already accumulated history, rebuild the schema-safe
+version from immutable run outputs before training:
+
+```bash
+python src/rebuild_history.py
+```
+
+TLE input is fail-closed: malformed/checksum-invalid responses and catalogue
+coverage below 90% are rejected, writes are atomic, and `--provider auto` can
+use authenticated Space-Track GP as a fallback when
+`SPACETRACK_IDENTITY`/`SPACETRACK_PASSWORD` are configured. CelesTrak remains
+the default and needs no credentials.
+
+For computer-independent, no-cloud-account collection, the repository includes
+a scheduled GitHub Actions workflow that commits immutable, hash-manifested
+bundles to a separate `data-collection` branch. Setup instructions are in
+[`docs/GITHUB_DATA_COLLECTION.md`](docs/GITHUB_DATA_COLLECTION.md).
+
+`config/experiment_60_days.json` is the authoritative source for collection,
+simulation thresholds, the `iac26-leo-mixed-75-v1` cohort, and report paths.
+CLI flags can override it
+for explicit one-off experiments, and those values are recorded in provenance.
+
+GitHub runs scheduled workflows only from the repository's default branch.
+Therefore `.github/workflows/collect_observations.yml` must be merged into
+`main` before the two-hour collector can start automatically. After merging,
+enable Actions if necessary, trigger one manual smoke run, and verify that the
+`data-collection` branch receives a new immutable `collections/github-run-*`
+bundle. Keeping the workflow only on a feature branch does not start the
+60-day experiment.
+
+`train_from_history.py` assigns canonical object pairs deterministically with
+SHA-256, then trains only on train-pair observations before a complete snapshot
+cutoff and tests only on held-out-pair observations after it. Cross-quadrant
+rows are excluded and counted. This simultaneously prevents future leakage,
+pair memorization, and splitting one snapshot block across train and test.
+The configured publication gate also requires minimum positive support across
+rows, independent catalogue pairs, and snapshots; insufficient data produces a
+`not_enough_data` report instead of an unstable model claim.
+
+Before exact TCA refinement, the maintained pipeline applies a conservative
+coarse screen from `space_debris.encounters`. On a separate vectorized 30-second grid,
+the screen uses twice Earth-surface escape speed (about 22.36 km/s relative),
+a one-kilometre numerical guard, and the actual final interval duration. Exact
+TCA refinement still searches every five-minute interval. A pair
+is rejected only when a 200 km encounter is impossible under this stated bound;
+invalid/unbound TLE assumptions fail open to exact refinement. Screening
+statistics are stored in every collection/resimulation provenance record.
 
 ## Outputs
 
 Written to `outputs/pipeline/` (or the `--outputs` directory):
 
-- `conjunction_dataset.csv` — every simulated pair
-- `identified_conjunctions.csv` — screened candidates (ML trains on these)
+- `conjunction_dataset.csv` — every conservative-screen-retained pair after
+  exact TCA refinement (screened-out count remains in provenance)
+- `identified_conjunctions.csv` — exact candidates within the configured
+  distance threshold (ML history uses only these)
 - `model_comparison.csv` — precision/recall/F1/accuracy per model
 - `top_pair_distance_timeseries.csv`, `top_pair_distance.png`
 - `risk_feature_space.png`, `tca_distance_scatter.png`,
@@ -146,9 +206,11 @@ no-target-leakage guarantee on the ML feature set, and a propagation smoke test.
 src/space_debris/    maintained package (core, ml, plots)
 src/run_pipeline.py  one-shot pipeline
 src/make_demo_tles.py deterministic synthetic demo catalogue
-src/fetch_tles.py    CelesTrak TLE fetch
+src/fetch_tles.py    validated CelesTrak fetch + optional Space-Track fallback
 src/collect_observations.py  repeated-snapshot collector
-src/train_from_history.py    time-split evaluation
+src/rebuild_history.py schema-safe history reconstruction
+src/resimulate_snapshots.py corrected-TCA historical resimulation
+src/train_from_history.py    pair-held-out chronological evaluation
 src/generate_plots.py        re-render plots from CSVs
 src/legacy/          original step1..step10 prototypes (reference only)
 tests/               unit tests

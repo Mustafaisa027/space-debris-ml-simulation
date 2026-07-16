@@ -1,65 +1,80 @@
 # IAC Abstract Alignment Review
 
-## Abstract Requirements
+This document treats IAC 2026 paper 114764's accepted abstract as the
+scientific contract for the repository. Implementation coverage and empirical
+evidence are deliberately separated: having code for a method is not evidence
+that its result claim is true.
 
-The abstract promises an open-source LEO conjunction analysis framework with:
+## Requirement-to-evidence matrix
 
-- TLE-driven state propagation using SGP4.
-- Identification of potential conjunction events.
-- A dataset containing minimum approach distance, TCA, and relative velocity.
-- Supervised models: Logistic Regression, Random Forest, XGBoost, and SVM.
-- Evaluation using precision, recall, F1-score, and comparison with fixed-distance thresholds.
-- A repeatable infrastructure suitable for student-led SSA research.
+| Abstract requirement | Implementation | Evidence state |
+| --- | --- | --- |
+| Open-source LEO conjunction framework | Public Python pipeline and reproducible experiment config | Implemented |
+| TLE input and SGP4 propagation | CelesTrak/Space-Track providers, immutable snapshots, Skyfield SGP4 | Implemented |
+| Potential encounter identification | Conservative coarse screening plus exact TCA refinement over every coarse interval | Implemented and regression-tested |
+| Minimum distance, TCA, relative velocity dataset | Versioned candidate history with provenance and catalogue IDs | Implemented |
+| Logistic Regression, Random Forest, XGBoost, SVM | Pair-held-out chronological evaluation; Decision Tree and LightGBM are supporting comparisons | Implemented; final evidence awaits sufficient data |
+| Precision, recall and F1 | Per-model report and publication figures | Implemented; final values await sufficient data |
+| Comparison with fixed-distance thresholds | Binary 25 km operating point plus continuous distance ranking | Implemented |
+| Reduced false alarm rate | Per-model `FP / (FP + TN)` and false-alarm-versus-recall curves are reported | **Not yet established**; final real held-out curves must show the reduction at comparable recall |
 
-## Current Implementation Status
+## Current empirical gate
 
-Implemented:
+The canonical experiment is 60 days at a two-hour collection cadence. A final
+model claim is permitted only after the corrected historical snapshots have
+been re-simulated and the strict pair-held-out future split contains both
+classes in train and test. Row count alone is not enough; positive events must
+span multiple snapshots and independent catalogue pairs. The configured gate
+requires 30/20 positive train/test rows, 10/5 positive train/test pairs, and
+5/3 positive train/test snapshots, plus the full 60-day cadence-adjusted
+observation span. Only the frozen `iac26-leo-mixed-75-v1` catalogue cohort is
+eligible; older mixed-size snapshots remain an audit archive.
 
-- TLE ingestion from local files and CelesTrak GP API.
-- SGP4 propagation through Skyfield.
-- LEO altitude filtering.
-- Pairwise conjunction screening.
-- Dataset columns for TCA, minimum distance, relative velocity, altitude difference, TLE epoch age, and risk score.
-- Fixed-threshold baseline.
-- Logistic Regression, Random Forest, SVM, and optional XGBoost.
-- Repeated collection workflow for a 60-day experiment.
-- Time-based train/test evaluation from accumulated history.
+Until that gate passes, the abstract sentence saying that results show
+"significantly higher adaptability and a reduced false alarm rate" is a
+hypothesis to test, not a repository result. If the completed experiment does
+not support it, the paper/abstract wording must be revised rather than forcing
+the analysis to match the claim.
 
-Important limitation:
+## Scientific interpretation
 
-- `risk_label` is a transparent proxy label because public TLE data does not include covariance or ground-truth collision labels. This should be stated in the paper. The project should not claim physical Probability of Collision (Pc); it should claim relative risk classification under open-data constraints.
+- `risk_label` is a transparent geometry/kinematics proxy, not confirmed
+  collision ground truth.
+- Public TLEs do not provide the covariance, hard-body radius, or validated
+  outcome data required for physical Probability of Collision (Pc).
+- The present supervised task measures recovery of a proxy screening rule.
+  It must not be described as operational collision-probability prediction.
+- The fixed 25 km alarm supplies confusion counts and false alarm rate.
+  Continuous `-min_distance_km` supplies the fair distance-only ranking for
+  PR-AUC/ROC-AUC.
+- False alarm comparisons are meaningful only alongside recall. A method that
+  alarms less because it misses positives has not improved the system.
 
-## Gaps To Close Before IAC Submission
+## Remaining work before submission
 
-1. Increase sample size.
-   The current smoke test uses only a few objects. For publishable results, collect 60 days of snapshots and include at least one larger CelesTrak group such as `STATIONS`, `WEATHER`, or a curated LEO catalog.
+1. Complete the 60-day immutable snapshot collection and corrected-TCA
+   historical re-simulation.
+2. Freeze the real pair-held-out chronological split and publish its manifest.
+3. Run LR, RF, XGBoost and SVM on the same real test partition; keep optional
+   Decision Tree/LightGBM results in a supporting table.
+4. Report precision, recall, F1, PR-AUC, confusion matrices and false alarm
+   rate for the fixed-distance baseline and every model.
+5. Run expanding-time pair-grouped folds and report mean, standard deviation,
+   valid-fold count and class support.
+6. Report the implemented strict feature ablation that removes label-defining
+   minimum distance, relative velocity, and the RIC position trio whose norm
+   reconstructs minimum distance.
+7. Make any "significant" or "reduced false alarm" statement only if the real
+   held-out evidence supports it at comparable recall.
+8. Migrate to OMM before using catalogue numbers that legacy fixed-width TLE
+   cannot represent safely.
 
-2. Avoid polling abuse.
-   CelesTrak states that GP data is checked every 2 hours, so the collector is set to a minimum 2-hour interval.
+## Synthetic-data boundary
 
-3. Add XGBoost to the environment.
-   Code supports it and `requirements.txt` includes it for the final comparison table.
-
-4. Report proxy-label methodology.
-   Explain that labels are generated from conjunction geometry: severe distance, distance threshold, relative velocity, and TCA window.
-
-5. Add ablation studies.
-   Compare models with and without `relative_velocity_km_s`, `time_to_tca_min`, and `max_tle_age_hours`.
-
-6. Add statistical confidence.
-   Report mean and standard deviation across time splits or weekly folds.
-
-7. Add reproducibility metadata.
-   Save collection timestamp, TLE filename, object count, thresholds, and software versions with every run.
-
-8. Plan OMM migration.
-   TLE is sufficient for the current abstract and legacy SGP4 workflow, but CelesTrak recommends OMM-compatible formats for future catalog-number growth and interoperability.
-
-## Strong Additions
-
-- A dashboard for monitoring top-N conjunction candidates over time.
-- Weekly drift analysis: whether model performance changes as TLE epochs and orbital geometry evolve.
-- Calibration plots for predicted risk score reliability.
-- Confusion-matrix figures for each model.
-- Larger open-data object sets using CelesTrak `GROUP` queries.
-- Optional OMM/CSV ingestion later, because CelesTrak is moving beyond legacy TLE limitations.
+Synthetic augmentation is not part of the canonical result. It may be added
+later as a separately named supporting experiment only after the real-data
+split is frozen, only on training rows, and only if there are enough genuine
+positive snapshots and pairs to support the sampler. The test set must remain
+entirely real TLE-derived and byte-identical across experiment arms. Ordinary
+SMOTE is feature-space statistical resampling, not a physically simulated
+conjunction.

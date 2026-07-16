@@ -1,12 +1,11 @@
 $ErrorActionPreference = "Stop"
 
-# Re-registers the 60-day collector Task Scheduler job so it explicitly uses
-# the leo_mixed preset (ROADMAP_YOL1.md GOREV 2): a curated CATNR catalog
+# Re-registers the 60-day collector Task Scheduler job using the authoritative
+# experiment JSON. Its leo_mixed preset is a curated CATNR catalog
 # spanning multiple orbital planes, fetched one object at a time. This avoids
 # the GROUP=STARLINK endpoint, which has been observed to return HTTP 403.
-# collect_observations.py now falls back to leo_mixed by default even without
-# --preset, but it is passed explicitly here so the scheduled task definition
-# stays self-documenting.
+# The preset, thresholds, cadence and v3 history path stay synchronized through
+# config/experiment_60_days.json.
 
 $Root = Split-Path -Parent $PSScriptRoot
 $TaskName = "SpaceDebrisCollector60Days"
@@ -19,7 +18,7 @@ Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue | Unregister
 
 $Action = New-ScheduledTaskAction `
   -Execute $Python `
-  -Argument "`"$Script`" --once --preset leo_mixed --history `"outputs\history\conjunction_observations.csv`"" `
+  -Argument "`"$Script`" --once --config `"config\experiment_60_days.json`"" `
   -WorkingDirectory $Root
 
 $Trigger = New-ScheduledTaskTrigger `
@@ -41,4 +40,4 @@ Register-ScheduledTask `
   -Description "Collect CelesTrak TLE snapshots (leo_mixed preset) and conjunction observations every 2 hours for 60 days." `
   -Force
 
-Write-Host "Re-registered task $TaskName with --preset leo_mixed, from $Start to $End"
+Write-Host "Re-registered task $TaskName with the authoritative experiment config, from $Start to $End"
