@@ -69,7 +69,6 @@ def test_frozen_catalog_cohort_requires_exact_id_set_and_no_override():
             "explicit",
             {"catalog_ids": [ids[0]], "requested_count": 1},
         )
-
     with pytest.raises(RuntimeError, match="Frozen catalogue cohort mismatch"):
         collect_observations.validate_catalog_cohort(
             args,
@@ -79,6 +78,43 @@ def test_frozen_catalog_cohort_requires_exact_id_set_and_no_override():
             {"catalog_ids": ids[:-1], "requested_count": 75},
         )
 
+
+def test_collect_once_removes_partial_snapshot_when_frozen_cohort_fails(
+    monkeypatch, tmp_path
+):
+    ids = list(fetch_tles.LEO_MIXED_CATALOG)
+    expected_hash = collect_observations.catalog_id_set_sha256(ids)
+
+    def partial_fetch(output, *_args, report=None, **_kwargs):
+        path = Path(output)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("partial", encoding="utf-8")
+        report.update(
+            provider="test",
+            catalog_ids=ids[:-1],
+            requested_count=len(ids),
+        )
+
+    monkeypatch.setattr(collect_observations, "fetch_to_file", partial_fetch)
+    args = _args(
+        days=60.0,
+        interval_hours=2.0,
+        once=True,
+        max_objects=75,
+        provider="celestrak",
+        catalog_sha256=expected_hash,
+        catalog_version="iac26-leo-mixed-75-v1",
+        snapshot_dir=str(tmp_path / "snapshots"),
+        run_root=str(tmp_path / "runs"),
+        history=str(tmp_path / "history.csv"),
+    )
+
+    with pytest.raises(RuntimeError, match="Frozen catalogue cohort mismatch"):
+        collect_observations.collect_once(args)
+
+    assert list((tmp_path / "snapshots").glob("*")) == []
+    assert list((tmp_path / "runs").glob("*")) == []
+    assert not (tmp_path / "history.csv").exists()
 
 def test_main_reports_single_collect_once_failure_to_scheduler(monkeypatch):
     calls = {"n": 0}

@@ -135,6 +135,16 @@ def validate_catalog_cohort(
     return actual_sha256
 
 
+def discard_failed_fetch_artifacts(snapshot_path: Path, run_dir: Path) -> None:
+    """Remove an unaccepted fetch without touching any completed run data."""
+    snapshot_path.unlink(missing_ok=True)
+    snapshot_path.with_suffix(".json").unlink(missing_ok=True)
+    try:
+        run_dir.rmdir()  # succeeds only when this newly-created run dir is empty
+    except (FileNotFoundError, OSError):
+        pass
+
+
 def write_provenance(path: Path, provenance: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     handle, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
@@ -227,15 +237,19 @@ def collect_once(args: argparse.Namespace) -> int:
 
     catnrs, groups, source = resolve_source(args)
     fetch_report: dict = {}
-    fetch_to_file(
-        snapshot_path,
-        catnrs,
-        groups,
-        args.max_objects,
-        provider=args.provider,
-        report=fetch_report,
-    )
-    catalog_sha256 = validate_catalog_cohort(args, catnrs, groups, source, fetch_report)
+    try:
+        fetch_to_file(
+            snapshot_path,
+            catnrs,
+            groups,
+            args.max_objects,
+            provider=args.provider,
+            report=fetch_report,
+        )
+        catalog_sha256 = validate_catalog_cohort(args, catnrs, groups, source, fetch_report)
+    except Exception:
+        discard_failed_fetch_artifacts(snapshot_path, run_dir)
+        raise
     objects = read_tles(snapshot_path)
 
     provenance = {
