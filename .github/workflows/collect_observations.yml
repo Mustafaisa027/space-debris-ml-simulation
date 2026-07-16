@@ -71,7 +71,7 @@ jobs:
             git worktree add --detach data-store HEAD
             cd data-store
             git switch --orphan "$DATA_BRANCH"
-            git rm -rf .
+            git rm -rf --ignore-unmatch .
             printf '%s\n' '# Space Debris Observation Archive' \
               '' 'Generated automatically by GitHub Actions. See the main branch for source code.' > README.md
             cd ..
