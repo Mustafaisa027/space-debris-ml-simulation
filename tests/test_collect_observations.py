@@ -6,6 +6,7 @@ Run with:  PYTHONPATH=src python -m pytest tests/ -q
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 from pathlib import Path
 
@@ -187,6 +188,28 @@ def test_append_csv_rejects_schema_drift_without_modifying_history(tmp_path):
         collect_observations.append_csv(target, source, {"collection_id": "new"})
 
     assert target.read_bytes() == before
+
+
+def test_append_csv_adds_refined_tca_flag_to_existing_history(tmp_path):
+    target = tmp_path / "history.csv"
+    target.write_text(
+        "collection_id,object_1,object_2,min_distance_km\n"
+        "old,SAT-A,SAT-B,12.5\n",
+        encoding="utf-8",
+    )
+    source = tmp_path / "dataset.csv"
+    source.write_text(
+        "object_1,object_2,min_distance_km,tca_boundary_flag\n"
+        "SAT-C,SAT-D,8.0,1\n",
+        encoding="utf-8",
+    )
+
+    count = collect_observations.append_csv(target, source, {"collection_id": "new"})
+
+    assert count == 1
+    rows = list(csv.DictReader(target.open(newline="", encoding="utf-8")))
+    assert rows[0]["tca_boundary_flag"] == ""
+    assert rows[1]["tca_boundary_flag"] == "1"
 
 
 def test_append_csv_rejects_malformed_existing_rows_without_modification(tmp_path):

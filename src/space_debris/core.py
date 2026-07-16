@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Iterable
 
 import numpy as np
+from scipy.optimize import minimize_scalar
 from skyfield.api import EarthSatellite, load
 
 from space_debris.provenance import write_csv_text_with_provenance
@@ -69,6 +70,10 @@ class PairResult:
     risk_score: float
     fixed_threshold_alarm: int
     risk_label: int
+    # 1 only when the global TCA is within one second of the simulation's
+    # actual start or end. Internal coarse-interval edges are not flagged:
+    # both adjacent intervals are searched, so they are not search boundaries.
+    tca_boundary_flag: int = 0
 
 
 def read_tles(path: Path) -> list[TleObject]:
@@ -105,13 +110,25 @@ def _unit(vec) -> np.ndarray:
     return array / norm
 
 
-def _iso_z(dt: datetime) -> str:
-    return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+def _iso_z(dt: datetime, *, preserve_microseconds: bool = False) -> str:
+    utc = dt.astimezone(timezone.utc)
+    if not preserve_microseconds:
+        utc = utc.replace(microsecond=0)
+    timespec = "microseconds" if preserve_microseconds else "seconds"
+    return utc.isoformat(timespec=timespec).replace("+00:00", "Z")
 
 
 def _to_skyfield_time(ts, dt: datetime):
     dt = dt.astimezone(timezone.utc)
     return ts.utc(dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second)
+
+
+def _to_skyfield_time_precise(ts, dt: datetime):
+    """Like ``_to_skyfield_time`` but keeps sub-second precision, needed by
+    the second-level TCA refinement search."""
+    dt = dt.astimezone(timezone.utc)
+    seconds = dt.second + dt.microsecond / 1e6
+    return ts.utc(dt.year, dt.month, dt.day, dt.hour, dt.minute, seconds)
 
 
 def _sat_epoch_iso(sat: EarthSatellite) -> str:
@@ -214,6 +231,150 @@ def _risk_label(
     )
 
 
+def _bounded_min_search(
+    distance_fn,
+    lower_s: float,
+    upper_s: float,
+    xatol_s: float = 0.1,
+) -> tuple[float, float, bool]:
+    """Bounded Brent search for the minimum of ``distance_fn`` on
+    ``[lower_s, upper_s]`` (seconds), decoupled from skyfield/SGP4 so it can
+    be unit tested against a closed-form analytic ground truth.
+
+    Returns ``(offset_s, distance_km, boundary_flag)``. ``boundary_flag`` is
+    True when the minimum sits within 1 second of either bound, meaning the
+    true minimum may lie outside the searched window.
+    """
+    if upper_s < lower_s:
+        raise ValueError(f"Invalid TCA search bounds: {lower_s} > {upper_s}")
+    if upper_s == lower_s:
+        return lower_s, float(distance_fn(lower_s)), True
+
+    candidates: list[tuple[float, float]] = []
+    if upper_s - lower_s < 1.0:
+        midpoint_s = (lower_s + upper_s) / 2.0
+        candidates.append((midpoint_s, float(distance_fn(midpoint_s))))
+    else:
+        result = minimize_scalar(
+            distance_fn, bounds=(lower_s, upper_s), method="bounded", options={"xatol": xatol_s},
+        )
+        candidates.append((float(result.x), float(result.fun)))
+
+    # scipy's bounded method searches the open interval. Evaluate both ends
+    # explicitly so a TCA exactly at the simulation start/end cannot be
+    # replaced by a slightly worse interior approximation.
+    candidates.extend(
+        [
+            (lower_s, float(distance_fn(lower_s))),
+            (upper_s, float(distance_fn(upper_s))),
+        ]
+    )
+    offset_s, distance_km = min(candidates, key=lambda candidate: candidate[1])
+    boundary_flag = bool((offset_s - lower_s) < 1.0 or (upper_s - offset_s) < 1.0)
+    return offset_s, distance_km, boundary_flag
+
+
+def _coarse_offsets_seconds(horizon_s: float, step_s: float) -> list[float]:
+    """Return ordered coarse offsets including both simulation endpoints."""
+    if horizon_s < 0:
+        raise ValueError("horizon must be non-negative")
+    if step_s <= 0:
+        raise ValueError("step must be positive")
+
+    offsets = [0.0]
+    offset_s = step_s
+    while offset_s < horizon_s and not math.isclose(offset_s, horizon_s, rel_tol=1e-12, abs_tol=1e-9):
+        offsets.append(offset_s)
+        offset_s += step_s
+    if horizon_s > 0:
+        offsets.append(horizon_s)
+    return offsets
+
+
+def _global_interval_min_search(
+    distance_fn,
+    horizon_s: float,
+    step_s: float,
+    xatol_s: float = 0.1,
+) -> tuple[float, float, bool]:
+    """Find the global TCA candidate by refining every coarse interval.
+
+    All coarse offsets (including zero and the exact horizon) are evaluated,
+    then every adjacent interval is independently refined. The best result
+    across coarse samples, interval endpoints and refined candidates wins.
+    This avoids the former single-window failure mode where a narrow close
+    approach between two high coarse samples was never searched because a
+    broader secondary minimum won the coarse scan elsewhere.
+
+    The returned flag is true only when the selected global result is within
+    one second of the simulation's real start/end. An internal interval edge
+    is not a quality boundary because its neighbouring interval is searched.
+    """
+    offsets = _coarse_offsets_seconds(horizon_s, step_s)
+    distance_cache: dict[float, float] = {}
+
+    def cached_distance(offset_s: float) -> float:
+        key = float(offset_s)
+        if key not in distance_cache:
+            distance_cache[key] = float(distance_fn(key))
+        return distance_cache[key]
+
+    candidates = [(offset_s, cached_distance(offset_s)) for offset_s in offsets]
+
+    for lower_s, upper_s in zip(offsets, offsets[1:]):
+        refined_offset_s, refined_distance_km, _interval_boundary = _bounded_min_search(
+            cached_distance,
+            lower_s,
+            upper_s,
+            xatol_s=xatol_s,
+        )
+        candidates.append((refined_offset_s, refined_distance_km))
+
+    offset_s, distance_km = min(candidates, key=lambda candidate: candidate[1])
+    offset_s = min(max(offset_s, 0.0), horizon_s)
+    boundary_flag = bool(offset_s < 1.0 or (horizon_s - offset_s) < 1.0)
+    return offset_s, distance_km, boundary_flag
+
+
+def _refine_tca(
+    ts,
+    sat1: EarthSatellite,
+    sat2: EarthSatellite,
+    start_utc: datetime,
+    step_minutes: float,
+    horizon_minutes: float,
+) -> tuple[datetime, float, bool]:
+    """Propagate a pair and refine every coarse interval for global TCA.
+
+    The coarse scan in ``simulate_pairs`` only samples every ``step_minutes``
+    (5 min by default); at 10-15 km/s relative velocity that is 3000-4500 km
+    of travel per step. Every adjacent coarse interval is therefore refined,
+    including a final short interval when the horizon is not step-aligned.
+
+    Returns ``(refined_tca_utc, refined_min_distance_km, boundary_flag)``.
+    Since every coarse sample is also a candidate, the refined distance can
+    never be worse than the best coarse-grid distance.
+    """
+    if horizon_minutes < 0:
+        raise ValueError("horizon_minutes must be non-negative")
+    if step_minutes <= 0:
+        raise ValueError("step_minutes must be positive")
+
+    horizon_s = horizon_minutes * 60.0
+    step_s = step_minutes * 60.0
+
+    def distance_at(offset_s: float) -> float:
+        t = _to_skyfield_time_precise(ts, start_utc + timedelta(seconds=offset_s))
+        return _distance_km(sat1.at(t).position.km, sat2.at(t).position.km)
+
+    refined_offset_s, refined_distance_km, boundary_flag = _global_interval_min_search(
+        distance_at,
+        horizon_s,
+        step_s,
+    )
+    return start_utc + timedelta(seconds=refined_offset_s), refined_distance_km, boundary_flag
+
+
 def simulate_pairs(
     satellites: list[EarthSatellite],
     start_utc: datetime,
@@ -228,6 +389,11 @@ def simulate_pairs(
 ) -> list[PairResult]:
     """Propagate every LEO pair and score its closest approach.
 
+    TCA is found by evaluating a coarse grid and applying a bounded Brent
+    search to every adjacent coarse interval (see ``_refine_tca``). Searching
+    all intervals prevents a narrow close approach between high coarse
+    samples from being hidden by a broader secondary minimum elsewhere.
+
     ``max_tle_age_hours`` (default 14 days) only controls a data-quality
     warning: SGP4 accuracy degrades quickly, so stale TLEs make the TCA
     and minimum-distance figures physically unreliable. The simulation
@@ -235,7 +401,6 @@ def simulate_pairs(
     """
     ts = load.timescale()
     start_utc = start_utc.astimezone(timezone.utc).replace(microsecond=0)
-    offsets = list(range(0, horizon_minutes + 1, step_minutes))
     results: list[PairResult] = []
 
     stale = [
@@ -266,19 +431,15 @@ def simulate_pairs(
             continue
 
         current_distance = _distance_km(p1_start, p2_start)
-        best_offset = 0
-        best_distance = current_distance
+        # Evaluate every coarse sample and refine every adjacent interval;
+        # selecting only the coarse winner's neighbourhood can miss a narrow
+        # but globally closer conjunction between two high coarse samples.
+        tca_dt, best_distance, tca_boundary_flag = _refine_tca(
+            ts, sat1, sat2, start_utc, step_minutes, horizon_minutes,
+        )
+        time_to_tca_min = (tca_dt - start_utc).total_seconds() / 60.0
 
-        for offset in offsets:
-            dt = start_utc + timedelta(minutes=offset)
-            t = _to_skyfield_time(ts, dt)
-            distance = _distance_km(sat1.at(t).position.km, sat2.at(t).position.km)
-            if distance < best_distance:
-                best_distance = distance
-                best_offset = offset
-
-        tca_dt = start_utc + timedelta(minutes=best_offset)
-        tca_t = _to_skyfield_time(ts, tca_dt)
+        tca_t = _to_skyfield_time_precise(ts, tca_dt)
         geocentric_1_tca = sat1.at(tca_t)
         geocentric_2_tca = sat2.at(tca_t)
         p1_tca = geocentric_1_tca.position.km
@@ -298,7 +459,7 @@ def simulate_pairs(
         # risk_score is a human-readable ranking aid only. It is written to
         # the CSV for triage but is deliberately EXCLUDED from the ML feature
         # set (see space_debris.ml.FEATURES) to avoid target leakage.
-        urgency = 1.0 + ((horizon_minutes - best_offset) / max(horizon_minutes, 1))
+        urgency = 1.0 + ((horizon_minutes - time_to_tca_min) / max(horizon_minutes, 1))
         risk_score = (relative_velocity / max(best_distance, 1.0)) * urgency
         risk_label = _risk_label(
             min_distance_km=best_distance,
@@ -315,8 +476,8 @@ def simulate_pairs(
                 tle_epoch_1_utc=_sat_epoch_iso(sat1),
                 tle_epoch_2_utc=_sat_epoch_iso(sat2),
                 max_tle_age_hours=max(_tle_age_hours(sat1, start_utc), _tle_age_hours(sat2, start_utc)),
-                tca_utc=_iso_z(tca_dt),
-                time_to_tca_min=float(best_offset),
+                tca_utc=_iso_z(tca_dt, preserve_microseconds=True),
+                time_to_tca_min=time_to_tca_min,
                 current_distance_km=current_distance,
                 min_distance_km=best_distance,
                 relative_velocity_km_s=relative_velocity,
@@ -333,6 +494,7 @@ def simulate_pairs(
                 risk_score=risk_score,
                 fixed_threshold_alarm=int(best_distance <= fixed_threshold_km),
                 risk_label=risk_label,
+                tca_boundary_flag=int(tca_boundary_flag),
             )
         )
 
@@ -360,7 +522,7 @@ def write_pair_results(
                 "tle_epoch_2_utc": row.tle_epoch_2_utc,
                 "max_tle_age_hours": f"{row.max_tle_age_hours:.3f}",
                 "tca_utc": row.tca_utc,
-                "time_to_tca_min": f"{row.time_to_tca_min:.0f}",
+                "time_to_tca_min": f"{row.time_to_tca_min:.9f}",
                 "current_distance_km": f"{row.current_distance_km:.3f}",
                 "min_distance_km": f"{row.min_distance_km:.3f}",
                 "relative_velocity_km_s": f"{row.relative_velocity_km_s:.6f}",
@@ -377,6 +539,7 @@ def write_pair_results(
                 "risk_score": f"{row.risk_score:.10f}",
                 "fixed_threshold_alarm": row.fixed_threshold_alarm,
                 "risk_label": row.risk_label,
+                "tca_boundary_flag": row.tca_boundary_flag,
             }
         )
 

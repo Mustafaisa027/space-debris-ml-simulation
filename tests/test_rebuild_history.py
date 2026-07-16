@@ -42,3 +42,27 @@ def test_rebuild_uses_latest_schema_and_reports_legacy_runs(tmp_path):
         rows = list(csv.DictReader(stream))
     assert rows[0]["collection_id"] == "new"
     assert rows[0]["relative_velocity_km_s"] == "12"
+
+
+def test_rebuild_treats_boundary_flag_as_additive_schema_column(tmp_path):
+    run_root = tmp_path / "runs"
+    snapshots = tmp_path / "snapshots"
+    snapshots.mkdir()
+    base = ["snapshot_utc", "object_1", "object_2", "min_distance_km"]
+    refined = base + ["tca_boundary_flag"]
+    _write_dataset(run_root / "old" / "conjunction_dataset.csv", base, ["2026-01-01Z", "A", "B", "10"])
+    _write_dataset(
+        run_root / "new" / "conjunction_dataset.csv",
+        refined,
+        ["2026-01-02Z", "A", "C", "20", "1"],
+    )
+    output = tmp_path / "history.csv"
+
+    report = rebuild_latest_schema_history(run_root, snapshots, output)
+
+    assert report["included_runs"] == ["new", "old"]
+    assert report["skipped_incompatible_runs"] == []
+    with output.open(newline="", encoding="utf-8") as stream:
+        rows = list(csv.DictReader(stream))
+    assert rows[0]["tca_boundary_flag"] == "1"
+    assert rows[1]["tca_boundary_flag"] == ""

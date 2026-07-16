@@ -14,6 +14,14 @@ from space_debris.core import build_satellites, filter_conjunctions, read_tles, 
 from space_debris.provenance import git_commit_hash
 
 
+ADDITIVE_HISTORY_DEFAULTS = {
+    # Historical rows predate the refined-TCA boundary diagnostic. Blank
+    # means "not recorded"; treating them as 0 would incorrectly assert that
+    # the old coarse-only result was checked and found away from a boundary.
+    "tca_boundary_flag": "",
+}
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Collect repeated TLE snapshots and conjunction observations")
     parser.add_argument("--days", type=float, default=60.0, help="collection duration")
@@ -106,12 +114,23 @@ def append_csv(target: Path, source: Path, extra: dict[str, str]) -> int:
     if target.exists() and target.stat().st_size:
         with target.open(newline="", encoding="utf-8") as current:
             current_reader = csv.DictReader(current)
-            if list(current_reader.fieldnames or []) != fieldnames:
+            existing_fieldnames = list(current_reader.fieldnames or [])
+            added_columns = [name for name in fieldnames if name not in existing_fieldnames]
+            additive_upgrade = (
+                bool(added_columns)
+                and all(name in ADDITIVE_HISTORY_DEFAULTS for name in added_columns)
+                and existing_fieldnames == [name for name in fieldnames if name not in added_columns]
+            )
+            if existing_fieldnames != fieldnames and not additive_upgrade:
                 raise HistorySchemaError(
                     "History schema mismatch; refusing to append. "
                     f"expected={fieldnames}, existing={current_reader.fieldnames}"
                 )
             existing_rows = list(current_reader)
+            if additive_upgrade:
+                for row in existing_rows:
+                    for name in added_columns:
+                        row[name] = ADDITIVE_HISTORY_DEFAULTS[name]
         if any(None in row for row in existing_rows):
             raise HistorySchemaError(
                 f"Existing history contains malformed rows wider than its header: {target}"

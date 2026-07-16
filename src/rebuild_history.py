@@ -30,6 +30,10 @@ NON_INDEPENDENT_OBJECT_NAMES = {
     "PROGRESS-MS 33",
 }
 
+ADDITIVE_SCHEMA_DEFAULTS = {
+    "tca_boundary_flag": "",
+}
+
 
 def read_dataset(path: Path) -> tuple[list[str], list[dict], dict[str, str]]:
     comments: dict[str, str] = {}
@@ -58,10 +62,27 @@ def rebuild_latest_schema_history(run_root: Path, snapshot_dir: Path, output: Pa
 
     inspected = [(path, *read_dataset(path)) for path in datasets]
     latest_columns = max((columns for _, columns, _, _ in inspected), key=len)
-    compatible = [item for item in inspected if item[1] == latest_columns]
-    skipped = [path.parent.name for path, columns, _, _ in inspected if columns != latest_columns]
+    def compatible_with_latest(columns: list[str]) -> bool:
+        missing = [column for column in latest_columns if column not in columns]
+        return (
+            not any(column not in latest_columns for column in columns)
+            and columns == [column for column in latest_columns if column in columns]
+            and all(column in ADDITIVE_SCHEMA_DEFAULTS for column in missing)
+        )
+
+    compatible = [item for item in inspected if compatible_with_latest(item[1])]
+    skipped = [
+        path.parent.name
+        for path, columns, _, _ in inspected
+        if not compatible_with_latest(columns)
+    ]
 
     output.parent.mkdir(parents=True, exist_ok=True)
+    additive_defaults = {
+        column: default
+        for column, default in ADDITIVE_SCHEMA_DEFAULTS.items()
+        if column in latest_columns
+    }
     handle, temporary_name = tempfile.mkstemp(prefix=f".{output.name}.", suffix=".tmp", dir=output.parent)
     written = 0
     filtered_non_independent = 0
@@ -86,7 +107,7 @@ def rebuild_latest_schema_history(run_root: Path, snapshot_dir: Path, output: Pa
                     if {row.get("object_1", ""), row.get("object_2", "")} & NON_INDEPENDENT_OBJECT_NAMES:
                         filtered_non_independent += 1
                         continue
-                    writer.writerow({**metadata, **row})
+                    writer.writerow({**additive_defaults, **metadata, **row})
                     written += 1
             stream.flush()
             os.fsync(stream.fileno())
