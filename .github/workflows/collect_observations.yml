@@ -15,6 +15,9 @@ concurrency:
 
 jobs:
   collect-and-publish:
+    # Scheduled runs always use the default branch; manual authoritative runs
+    # are restricted to main so a feature ref cannot publish experiment data.
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -34,10 +37,16 @@ jobs:
           cache: pip
           cache-dependency-path: requirements-collector.txt
 
+      - name: Check frozen collection window
+        id: collection_window
+        run: python src/collection_window_status.py --config config/experiment_60_days.json
+
       - name: Install collector dependencies
+        if: steps.collection_window.outputs.collect == 'true'
         run: python -m pip install -r requirements-collector.txt
 
       - name: Collect one observation bundle
+        if: steps.collection_window.outputs.collect == 'true'
         run: |
           python src/collect_observations.py \
             --once \
@@ -48,15 +57,22 @@ jobs:
             --history "$COLLECTION_ROOT/history/conjunction_observations_iac26_75_v1.csv"
 
       - name: Verify collection output
+        if: steps.collection_window.outputs.collect == 'true'
         run: |
           test -s "$COLLECTION_ROOT/history/conjunction_observations_iac26_75_v1.csv"
           test "$(find "$COLLECTION_ROOT/tle" -type f -name '*.txt' | wc -l)" -ge 1
           test "$(find "$COLLECTION_ROOT/runs" -type f -name 'conjunction_dataset.csv' | wc -l)" -ge 1
 
+      - name: Record runtime environment
+        if: steps.collection_window.outputs.collect == 'true'
+        run: python src/capture_runtime_environment.py "$COLLECTION_ROOT/environment/runtime.json"
+
       - name: Build integrity manifest
+        if: steps.collection_window.outputs.collect == 'true'
         run: python src/build_collection_manifest.py "$COLLECTION_ROOT"
 
       - name: Publish bundle to the data branch
+        if: steps.collection_window.outputs.collect == 'true'
         env:
           RUN_ID: ${{ github.run_id }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
@@ -78,7 +94,12 @@ jobs:
           fi
 
           destination="data-store/collections/github-run-${RUN_ID}-attempt-${RUN_ATTEMPT}"
-          mkdir -p "$destination"
+          if [ -e "$destination" ]; then
+            echo "Refusing to overwrite immutable collection destination: $destination" >&2
+            exit 1
+          fi
+          mkdir -p "$(dirname "$destination")"
+          mkdir "$destination"
           cp -R "$COLLECTION_ROOT"/. "$destination"/
 
           cd data-store

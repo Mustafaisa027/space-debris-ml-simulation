@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import os
 import tempfile
 from pathlib import Path
 
 from space_debris.experiment import DEFAULT_EXPERIMENT_CONFIG, load_experiment_config
+from space_debris.provenance import write_json_atomic
 
 
 METADATA_COLUMNS = [
@@ -39,6 +41,14 @@ ADDITIVE_SCHEMA_DEFAULTS = {
     "object_1_catalog_id": "",
     "object_2_catalog_id": "",
 }
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def read_dataset(path: Path) -> tuple[list[str], list[dict], dict[str, str]]:
@@ -73,6 +83,7 @@ def rebuild_latest_schema_history(
     included_collection_ids: set[str] | None = None,
     catalog_version: str | None = None,
     catalog_sha256: str | None = None,
+    require_resimulation_integrity: bool = False,
 ) -> dict:
     datasets = sorted(run_root.glob("*/conjunction_dataset.csv"))
     if included_collection_ids is not None:
@@ -100,6 +111,25 @@ def rebuild_latest_schema_history(
             "No conjunction datasets match frozen catalogue cohort "
             f"version={catalog_version!r} sha256={catalog_sha256!r} below {run_root}"
         )
+
+    if require_resimulation_integrity:
+        for dataset in datasets:
+            resimulation_path = dataset.parent / "resimulation.json"
+            if not resimulation_path.is_file():
+                raise ValueError(f"Missing resimulation integrity record: {resimulation_path}")
+            try:
+                resimulation = json.loads(resimulation_path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+                raise ValueError(
+                    f"Invalid resimulation integrity record: {resimulation_path}: {exc}"
+                ) from exc
+            expected_hash = resimulation.get("output_sha256", {}).get(
+                "conjunction_dataset.csv"
+            )
+            if expected_hash != _sha256(dataset):
+                raise ValueError(
+                    f"Resimulation dataset hash mismatch before history rebuild: {dataset}"
+                )
 
     inspected = [(path, *read_dataset(path)) for path in datasets]
     latest_columns = max((columns for _, columns, _, _ in inspected), key=len)
@@ -206,6 +236,8 @@ def rebuild_latest_schema_history(
 
     return {
         "output": str(output),
+        "output_sha256": _sha256(output),
+        "output_bytes": output.stat().st_size,
         "schema_columns": latest_columns,
         "included_runs": [path.parent.name for path, *_ in compatible],
         "skipped_incompatible_runs": skipped,
@@ -222,6 +254,12 @@ def rebuild_latest_schema_history(
         "fixed_alarms": fixed_alarms,
         "positive_labels": positive_labels,
         "resimulation_fingerprints": resimulation_fingerprints,
+        "resimulation_integrity_required": require_resimulation_integrity,
+        "resimulation_fingerprint_set_sha256": hashlib.sha256(
+            json.dumps(
+                resimulation_fingerprints, sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")
+        ).hexdigest(),
     }
 
 
@@ -254,8 +292,7 @@ def main() -> None:
         catalog_version=config.catalog_version,
         catalog_sha256=config.catalog_sha256 or None,
     )
-    args.report.parent.mkdir(parents=True, exist_ok=True)
-    args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    write_json_atomic(args.report, report)
     print(json.dumps(report, indent=2))
 
 

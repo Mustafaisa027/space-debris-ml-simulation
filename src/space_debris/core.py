@@ -14,6 +14,8 @@ import numpy as np
 from scipy.optimize import minimize_scalar
 from skyfield.api import EarthSatellite, load
 
+from space_debris.tle_validation import validated_tle_blocks
+
 from space_debris.encounters import (
     MAX_BOUND_RELATIVE_SPEED_KM_S,
     SCREENING_NUMERICAL_GUARD_KM,
@@ -84,10 +86,7 @@ class PairResult:
 
 
 def read_tles(path: Path) -> list[TleObject]:
-    lines = [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
-    if len(lines) % 3 != 0:
-        raise ValueError(f"TLE file must contain name/line1/line2 groups: {path}")
-    return [TleObject(lines[i], lines[i + 1], lines[i + 2]) for i in range(0, len(lines), 3)]
+    return [TleObject(*block) for block in validated_tle_blocks(path)]
 
 
 def build_satellites(objects: Iterable[TleObject]) -> list[EarthSatellite]:

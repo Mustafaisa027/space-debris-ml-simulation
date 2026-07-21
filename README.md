@@ -24,6 +24,25 @@ of collision (Pc): that requires covariance data, object size, and an error
 ellipsoid, which are outside the scope of the public-TLE, open-data setting the
 paper targets. `risk_score` is a transparent ranking aid, not a Pc.
 
+`risk_label` (the ML target) is itself a deterministic function of
+`min_distance_km` and `relative_velocity_km_s` (see `space_debris/core.py`), not
+an independent ground truth. Two features sets in `space_debris/ml.py` make
+this explicit rather than accidental:
+
+- `snapshot_only` (**the predictive-power claim**, and the default everywhere
+  in this repo): predictors available before the TCA search runs. This is the
+  headline "ML vs. fixed-distance baseline" comparison.
+- `full_rule_recovery`: additionally gives the model the two features that
+  *define* `risk_label`. This measures how well a model recovers a known,
+  transparent rule from raw physical inputs — a sanity/diagnostic control, not
+  a predictive-power result. `train_from_history.py` always runs and reports
+  this separately (suffixed `_full_rule_recovery.csv`), never blended into the
+  primary claim.
+
+`run_pipeline.py` defaults to `snapshot_only` for this reason; pass
+`--feature-set full_rule_recovery` only if you intend to reproduce the
+rule-recovery diagnostic, not the predictive-power result.
+
 ## Installation
 
 ```bash
@@ -73,6 +92,12 @@ km), not the earlier 3000-10000 km placeholders. If any TLE epoch is older than
 `--max-tle-age-hours` (default 14 days) the pipeline prints a data-quality
 warning and the geometry should be treated as illustrative only.
 
+These commands run with `--feature-set snapshot_only` by default — the
+predictive-power comparison described above. They do **not** reproduce the
+60-day frozen-cohort protocol below (single snapshot, no chronological
+train/test split); use them to exercise the pipeline against live data, not to
+reproduce the paper's headline result.
+
 ## Building a proper dataset (60-day collection)
 
 A single snapshot yields very few conjunctions, so no classifier can reliably
@@ -88,7 +113,10 @@ python src/collect_observations.py --once
 # 60-day background collection (see scripts/ for Windows Task Scheduler helpers)
 python src/collect_observations.py --days 60 --interval-hours 2
 
-# rebuild corrected-TCA history from immutable snapshots
+# verify/import the GitHub archive, then rebuild corrected-TCA history
+git fetch origin data-collection
+git worktree add ../space-debris-data origin/data-collection
+python src/import_collection_archive.py ../space-debris-data
 python src/resimulate_snapshots.py --config config/experiment_60_days.json
 
 # pair-held-out, time-ordered evaluation over corrected-TCA history
@@ -97,13 +125,55 @@ python src/train_from_history.py
 
 The training command defaults to the corrected frozen-cohort
 `conjunction_observations_resimulated_iac26_75_v1.csv`, not the live collector
-history or the older mixed 5/43/75-object archive.
-It writes the canonical full-feature comparison and a separate
-`*_without_label_rule_features.csv` ablation that removes minimum distance,
-relative velocity, and the three RIC position components whose norm reconstructs
-minimum distance. The ablation uses the identical held-out pair/time split and
-exposes how much performance comes from directly recovering the transparent
-proxy-label rule.
+history or the older mixed 5/43/75-object archive. The claim-eligible primary
+experiment is pre-specified XGBoost using only six quantities available at the
+observation snapshot: current distance, altitude difference, maximum TLE age,
+radial velocity, tangential velocity and approach angle. TCA, minimum-distance,
+TCA-relative-velocity and TCA-RIC quantities are excluded from that primary
+model because they define or reconstruct the future proxy target.
+
+The run also writes snapshot geometry/kinematics ablations, a snapshot-state
+constant-velocity CPA baseline, an exact proxy-rule oracle, a deterministic
+train-label-permutation negative control, and distance-only, transparent
+proxy-rule and full 13-feature rule-recovery arms on the identical held-out pair/time split. These are
+non-claim-eligible controls: in particular, strong performance by the full arm
+shows how easily the deterministic proxy rule can be reconstructed, while
+unexpectedly strong permutation performance warns of leakage or evaluation
+error.
+
+The same run writes a SHA-256-bound split manifest, row/pair-identifiable
+held-out prediction CSV, machine-readable feature importances and 2,000-draw
+separate paired pair-cluster and UTC-day-block bootstrap sensitivity intervals. Model operating thresholds are selected
+only inside the outer training partition at the fixed baseline's validation
+recall. The same inner-validation partition also freezes a stronger
+distance-only comparator; held-out labels never tune either threshold. A lower
+proxy false-alarm claim remains fail-closed unless it beats both the untouched
+25 km alarm and this calibrated distance comparator and its 95%
+interval excludes zero while recall is non-inferior within the configured 0.05
+margin under both resampling units. At least five held-out UTC day blocks are
+required. Publication plots consume these frozen artifacts and do not refit a
+second copy of the models.
+
+For each learner, the evidence table also reports model-minus-linear-CPA
+metric differences and pair/day bootstrap intervals. This same-snapshot-
+information comparison is a sensitivity analysis, not a second primary claim.
+The pair and day resamples are deliberately reported as two conditional,
+marginal checks rather than a multiway population-confidence interval; they do
+not eliminate shared-object graph dependence.
+
+The separate statistical adaptability artifact compares frozen snapshot-only
+XGBoost with the calibrated continuous-distance comparator on non-overlapping
+future blocks. It uses a dyadic catalogue-object x time-block bootstrap and
+requires ten eligible blocks, 30 objects, 30 pairs, a positive one-sided 95%
+lower bound, p < 0.05, and positive AP advantage in every block. Expanding-time
+CV remains descriptive; insufficient support keeps the abstract claim closed.
+Blocks start one polling interval after the outer cutoff. Rows in that initial
+interval remain valid held-out predictions but are excluded as a pre-registered
+embargo; rows before the cutoff are rejected. Partial final cycles are excluded.
+Publication creation recomputes the inference after recursively verifying the
+canonical history/config/split/prediction/evidence graph for the main run and
+all six ablations, including canonical split digests and source hashes embedded
+in supporting CSV/PNG artifacts.
 
 If an older checkout already accumulated history, rebuild the schema-safe
 version from immutable run outputs before training:
@@ -112,9 +182,15 @@ version from immutable run outputs before training:
 python src/rebuild_history.py
 ```
 
-TLE input is fail-closed: malformed/checksum-invalid responses and catalogue
-coverage below 90% are rejected, writes are atomic, and `--provider auto` can
-use authenticated Space-Track GP as a fallback when
+TLE input is fail-closed: malformed/checksum-invalid responses are always
+rejected and writes are atomic. The 90% coverage floor applies to `--catnr`
+fetches, where the requested catalogue IDs are known in advance so a
+received/requested ratio is meaningful; a bare `--group` fetch has no fixed
+target to compare against; and instead is only guaranteed to reject a
+zero-object result (see `fetch_tle_blocks`/`write_tle_file` in
+`src/fetch_tles.py`). The frozen IAC protocol always fetches via the `--catnr`
+`leo_mixed` preset, so the 90% floor applies to every claim-eligible run.
+`--provider auto` can use authenticated Space-Track GP as a fallback when
 `SPACETRACK_IDENTITY`/`SPACETRACK_PASSWORD` are configured. CelesTrak remains
 the default and needs no credentials.
 
@@ -123,9 +199,20 @@ a scheduled GitHub Actions workflow that commits immutable, hash-manifested
 bundles to a separate `data-collection` branch. Setup instructions are in
 [`docs/GITHUB_DATA_COLLECTION.md`](docs/GITHUB_DATA_COLLECTION.md).
 
+The final collection interval is frozen in the experiment config and anchored
+to the pre-specified `17 */2 * * *` UTC cron grid. Coverage is measured over 720
+half-open two-hour bins using each bundle's recorded `snapshot_utc`; retries
+cannot inflate it, at least 90% of slots must be present, the actual timestamp
+gap (including window endpoints) may not exceed six hours, at least 50% of
+occupied bins must have distinct TLE hashes, and an identical-hash run may not
+exceed 12 bins.
+
 `config/experiment_60_days.json` is the authoritative source for collection,
 simulation thresholds, the `iac26-leo-mixed-75-v1` cohort, and report paths.
-CLI flags can override it
+Exploratory tools may accept alternate configs, but the claim-eligible
+`train_from_history.py` entry point rejects every other config path. Changing
+the frozen protocol requires a new versioned experiment and collection window;
+it cannot be overridden after outcomes are observed.
 for explicit one-off experiments, and those values are recorded in provenance.
 
 GitHub runs scheduled workflows only from the repository's default branch.
@@ -187,15 +274,16 @@ no-target-leakage guarantee on the ML feature set, and a propagation smoke test.
 
 ## Methodology notes for reviewers
 
-- **Label definition.** `risk_label` is a function of the minimum approach
-  distance *and* the relative velocity at TCA. It couples geometry with
-  kinematics, so a distance-only fixed threshold necessarily mislabels slow
-  close passes (false alarms) and fast, slightly-more-distant passes (misses).
-  This is the gap the ML models are asked to close.
-- **No target leakage.** `risk_score` (a monotone transform of the same
-  quantities that define the label) is deliberately excluded from the model
-  feature set. A test enforces this. This is why the earlier version reported a
-  perfect fixed-threshold model — the task had been trivially self-referential.
+- **Label definition.** `risk_label` is a deterministic future-propagation
+  proxy based on minimum approach distance and relative velocity at TCA. Its
+  disagreement with a 25 km distance alarm is expected by construction; that
+  disagreement alone is not evidence of adaptability or operational safety.
+- **Target-definition protection.** The claim-eligible primary feature set
+  excludes `risk_score`, both label-defining variables, TCA/time-to-TCA fields,
+  the three TCA-RIC coordinates that reconstruct miss distance, and the current
+  implementation of relative inclination because it is evaluated at TCA. A
+  full-feature rule-recovery model remains only as a non-claim-eligible positive
+  control.
 - **Screening before classification.** Per the paper, models are trained on the
   *identified conjunctions*, not on all pairs, so distance alone no longer
   separates the classes within the candidate set.

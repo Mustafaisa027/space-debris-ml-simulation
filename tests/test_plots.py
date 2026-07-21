@@ -6,6 +6,8 @@ Run with:  PYTHONPATH=src python -m pytest tests/ -q
 
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -65,31 +67,115 @@ def test_savefig_embeds_provenance_metadata_and_dpi(tmp_path):
     assert dpi is not None and round(dpi[0]) == 300
 
 
-def test_publication_plots_render_on_balanced_dataset(tmp_path):
+def test_publication_plots_reject_dataset_refit_without_frozen_artifacts(tmp_path):
     df = _synthetic_dataset(200, seed=1)
     dataset_path = tmp_path / "dataset.csv"
     df.to_csv(dataset_path, index=False)
 
-    outputs = plots.create_publication_plots(dataset_path, tmp_path, current_threshold_km=25.0)
-
-    assert len(outputs) == 5
-    for path in outputs:
-        assert path.exists()
-        assert path.stat().st_size > 0
-        dpi = _png_info(path).get("dpi")
-        assert dpi is not None and round(dpi[0]) == 300
+    with pytest.raises(ValueError, match="frozen evaluation manifest"):
+        plots.create_publication_plots(dataset_path, tmp_path, current_threshold_km=25.0)
 
 
-def test_publication_plots_skip_gracefully_on_single_class_dataset(tmp_path):
+def test_publication_plots_do_not_treat_single_class_dataset_as_publication_evidence(tmp_path):
     df = _synthetic_dataset(20, seed=2)
     df["risk_label"] = 0  # force a single class -> nothing trainable/plottable
     dataset_path = tmp_path / "dataset.csv"
     df.to_csv(dataset_path, index=False)
 
-    outputs = plots.create_publication_plots(dataset_path, tmp_path)
+    with pytest.raises(ValueError, match="frozen evaluation manifest"):
+        plots.create_publication_plots(dataset_path, tmp_path)
 
-    # Must not crash; simply produces no publication figures for this dataset.
-    assert outputs == []
+
+def test_publication_plots_consume_frozen_prediction_artifact_without_refit(
+    tmp_path, monkeypatch
+):
+    rows = []
+    for index, label in enumerate([0, 1, 0, 1, 0, 1]):
+        for model, score, pred in (
+            ("fixed_threshold", -float(80 if label == 0 else 10), label),
+            ("random_forest", float(label), label),
+        ):
+            rows.append(
+                {
+                    "source_row_id": f"row-{index}",
+                    "canonical_pair_id": f"pair-{index}",
+                    "y_true": label,
+                    "model": model,
+                    "score": score,
+                    "pred": pred,
+                    "min_distance_km": 80 if label == 0 else 10,
+                }
+            )
+    split_sha256 = "a" * 64
+    predictions_path = tmp_path / "held_out_predictions.csv"
+    predictions = pd.DataFrame(rows)
+    predictions["split_sha256"] = split_sha256
+    predictions.to_csv(predictions_path, index=False)
+    importance_path = tmp_path / "feature_importance.csv"
+    importance = pd.DataFrame(
+        [
+            {"model": "random_forest", "feature": feature, "importance": 1 / len(plots.FEATURES)}
+            for feature in plots.FEATURES
+        ]
+    )
+    importance["split_sha256"] = split_sha256
+    importance.to_csv(importance_path, index=False)
+    manifest_path = tmp_path / "evaluation_manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 3,
+                "split_manifest": {"split_sha256": split_sha256},
+                "predictions": {
+                    "path": str(predictions_path),
+                    "sha256": plots._file_sha256(predictions_path),
+                },
+                "feature_importance": {
+                    "path": str(importance_path),
+                    "sha256": plots._file_sha256(importance_path),
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        plots,
+        "model_predictions_for_plotting",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("unexpected refit")),
+    )
+    outputs = plots.create_publication_plots(
+        tmp_path / "unused.csv",
+        tmp_path / "figures",
+        current_threshold_km=25.0,
+        predictions_path=predictions_path,
+        feature_importance_path=importance_path,
+        evaluation_manifest_path=manifest_path,
+    )
+
+    assert len(outputs) == 5
+    for path in outputs:
+        assert path.is_file()
+        description = _png_info(path)["Description"]
+        assert "unspecified" not in description
+        expected_source = importance_path if path.name == "pub_feature_importance.png" else predictions_path
+        assert f"sha256={plots._file_sha256(expected_source)}" in description
+
+
+def test_publication_prediction_artifact_must_be_row_paired(tmp_path):
+    predictions = pd.DataFrame(
+        [
+            {"source_row_id": "a", "canonical_pair_id": "p", "y_true": 0,
+             "model": "fixed_threshold", "score": 0.0, "pred": 0},
+            {"source_row_id": "b", "canonical_pair_id": "q", "y_true": 1,
+             "model": "model", "score": 1.0, "pred": 1},
+        ]
+    )
+    path = tmp_path / "predictions.csv"
+    predictions.to_csv(path, index=False)
+
+    with pytest.raises(ValueError, match="not row-paired"):
+        plots._publication_predictions(tmp_path / "unused.csv", None, path, {})
 
 
 def test_threshold_sensitivity_uses_same_held_out_future_test_partition(tmp_path):
@@ -131,3 +217,4 @@ def test_plot_model_metrics_reads_report_with_provenance_header(tmp_path):
 
     assert output_path.exists()
     assert output_path.stat().st_size > 0
+    assert f"sha256={plots._file_sha256(report_path)}" in _png_info(output_path)["Description"]

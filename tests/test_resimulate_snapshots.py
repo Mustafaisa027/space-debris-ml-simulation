@@ -2,12 +2,40 @@ from __future__ import annotations
 
 import json
 from argparse import Namespace
+from dataclasses import replace
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 
 import resimulate_snapshots
 from space_debris.experiment import load_experiment_config
+from space_debris.archive import catalog_id_set_sha256
+
+
+def _resimulation_config_and_sidecar(snapshot):
+    ids = ["10001", "10002"]
+    config = replace(
+        load_experiment_config("config/experiment_60_days.json"),
+        catalog_version="test-frozen-2-v1",
+        catalog_sha256=catalog_id_set_sha256(ids),
+        max_objects=2,
+        preset="test_preset",
+    )
+    sidecar = {
+        "fetched_utc": "2026-07-02T15:04:45Z",
+        "catalog_version": config.catalog_version,
+        "catalog_sha256": config.catalog_sha256,
+        "catalog_ids": ids,
+        "object_count": config.max_objects,
+        "requested_object_count": config.max_objects,
+        "preset": config.preset,
+    }
+    snapshot.with_suffix(".json").write_text(json.dumps(sidecar), encoding="utf-8")
+    objects = [
+        SimpleNamespace(line1=f"1 {catalog_id:>5}") for catalog_id in ids
+    ]
+    return config, objects
 
 
 def test_snapshot_utc_prefers_provenance_and_falls_back_to_filename(tmp_path):
@@ -26,11 +54,8 @@ def test_resimulation_is_atomic_and_resumable(monkeypatch, tmp_path):
     snapshot = tmp_path / "snapshots" / "tles_20260702_150445.txt"
     snapshot.parent.mkdir()
     snapshot.write_text("valid-placeholder", encoding="utf-8")
-    snapshot.with_suffix(".json").write_text(
-        json.dumps({"fetched_utc": "2026-07-02T15:04:45Z"}), encoding="utf-8"
-    )
-    config = load_experiment_config("config/experiment_60_days.json")
-    monkeypatch.setattr(resimulate_snapshots, "read_tles", lambda _path: [object(), object()])
+    config, objects = _resimulation_config_and_sidecar(snapshot)
+    monkeypatch.setattr(resimulate_snapshots, "read_tles", lambda _path: objects)
     monkeypatch.setattr(resimulate_snapshots, "build_satellites", lambda objects: objects)
     monkeypatch.setattr(resimulate_snapshots, "simulate_pairs", lambda **kwargs: [])
     monkeypatch.setattr(resimulate_snapshots, "filter_conjunctions", lambda rows, threshold: [])
@@ -56,7 +81,7 @@ def test_resimulation_refuses_changed_input_for_completed_run(monkeypatch, tmp_p
     (final_dir / "resimulation.json").write_text(
         json.dumps({"input_sha256": "different"}), encoding="utf-8"
     )
-    config = load_experiment_config("config/experiment_60_days.json")
+    config, _objects = _resimulation_config_and_sidecar(snapshot)
 
     with pytest.raises(ValueError, match="fingerprint/output integrity differs"):
         resimulate_snapshots.resimulate_snapshot(snapshot, output_root, config)
@@ -65,19 +90,55 @@ def test_resimulation_refuses_changed_input_for_completed_run(monkeypatch, tmp_p
 def test_resimulation_fingerprint_detects_sidecar_epoch_change(monkeypatch, tmp_path):
     snapshot = tmp_path / "tles_20260702_150445.txt"
     snapshot.write_text("valid-placeholder", encoding="utf-8")
+    config, objects = _resimulation_config_and_sidecar(snapshot)
     sidecar = snapshot.with_suffix(".json")
-    sidecar.write_text(json.dumps({"fetched_utc": "2026-07-02T15:04:45Z"}), encoding="utf-8")
-    config = load_experiment_config("config/experiment_60_days.json")
-    monkeypatch.setattr(resimulate_snapshots, "read_tles", lambda _path: [object(), object()])
+    monkeypatch.setattr(resimulate_snapshots, "read_tles", lambda _path: objects)
     monkeypatch.setattr(resimulate_snapshots, "build_satellites", lambda objects: objects)
     monkeypatch.setattr(resimulate_snapshots, "simulate_pairs", lambda **kwargs: [])
     monkeypatch.setattr(resimulate_snapshots, "filter_conjunctions", lambda rows, threshold: [])
     output_root = tmp_path / "runs"
     resimulate_snapshots.resimulate_snapshot(snapshot, output_root, config)
-    sidecar.write_text(json.dumps({"fetched_utc": "2026-07-02T16:04:45Z"}), encoding="utf-8")
+    changed = json.loads(sidecar.read_text(encoding="utf-8"))
+    changed["fetched_utc"] = "2026-07-02T16:04:45Z"
+    sidecar.write_text(json.dumps(changed), encoding="utf-8")
 
     with pytest.raises(ValueError, match="fingerprint/output integrity differs"):
         resimulate_snapshots.resimulate_snapshot(snapshot, output_root, config)
+
+
+def test_resimulation_rejects_actual_tle_ids_outside_frozen_cohort(
+    monkeypatch, tmp_path
+):
+    snapshot = tmp_path / "tles_20260702_150445.txt"
+    snapshot.write_text("valid-placeholder", encoding="utf-8")
+    config, _objects = _resimulation_config_and_sidecar(snapshot)
+    wrong_objects = [
+        SimpleNamespace(line1="1 10001"),
+        SimpleNamespace(line1="1 99999"),
+    ]
+    monkeypatch.setattr(resimulate_snapshots, "read_tles", lambda _path: wrong_objects)
+
+    with pytest.raises(ValueError, match="frozen catalogue mismatch"):
+        resimulate_snapshots.resimulate_snapshot(snapshot, tmp_path / "runs", config)
+
+
+def test_resimulation_fingerprint_records_numerical_runtime(monkeypatch, tmp_path):
+    snapshot = tmp_path / "tles_20260702_150445.txt"
+    snapshot.write_text("valid-placeholder", encoding="utf-8")
+    config, objects = _resimulation_config_and_sidecar(snapshot)
+    monkeypatch.setattr(resimulate_snapshots, "read_tles", lambda _path: objects)
+    monkeypatch.setattr(resimulate_snapshots, "build_satellites", lambda values: values)
+    monkeypatch.setattr(resimulate_snapshots, "simulate_pairs", lambda **kwargs: [])
+    monkeypatch.setattr(resimulate_snapshots, "filter_conjunctions", lambda rows, threshold: [])
+
+    result = resimulate_snapshots.resimulate_snapshot(
+        snapshot, tmp_path / "runs", config
+    )
+
+    runtime = result["fingerprint_inputs"]["runtime_environment"]
+    assert runtime["schema_version"] == 1
+    assert runtime["python"]["version"]
+    assert isinstance(runtime["packages"], list)
 
 
 def test_failed_batch_does_not_publish_canonical_history(monkeypatch, tmp_path):

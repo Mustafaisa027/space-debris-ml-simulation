@@ -6,9 +6,11 @@ import json
 import os
 import shutil
 import tempfile
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
+from capture_runtime_environment import runtime_environment
 from rebuild_history import rebuild_latest_schema_history
 from space_debris import core as core_module
 from space_debris import encounters as encounters_module
@@ -20,7 +22,8 @@ from space_debris.core import (
     write_pair_results,
 )
 from space_debris.experiment import DEFAULT_EXPERIMENT_CONFIG, load_experiment_config
-from space_debris.provenance import generated_utc, git_commit_hash
+from space_debris.archive import catalog_id_set_sha256
+from space_debris.provenance import generated_utc, git_commit_hash, write_json_atomic
 
 
 RESIMULATION_SCHEMA_VERSION = 1
@@ -36,7 +39,15 @@ def _sha256(path: Path) -> str:
 
 def _snapshot_metadata(snapshot_path: Path) -> dict:
     sidecar = snapshot_path.with_suffix(".json")
-    return json.loads(sidecar.read_text(encoding="utf-8")) if sidecar.exists() else {}
+    if not sidecar.is_file():
+        raise ValueError(f"Canonical resimulation requires a TLE sidecar: {sidecar}")
+    try:
+        metadata = json.loads(sidecar.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Invalid TLE sidecar {sidecar}: {exc}") from exc
+    if not isinstance(metadata, dict):
+        raise ValueError(f"TLE sidecar must contain a JSON object: {sidecar}")
+    return metadata
 
 
 def _snapshot_utc(snapshot_path: Path, metadata: dict) -> datetime:
@@ -57,6 +68,7 @@ def _run_fingerprint(snapshot_path: Path, metadata: dict, config) -> tuple[str, 
         "sidecar_sha256": _sha256(sidecar) if sidecar.exists() else None,
         "snapshot_utc": _snapshot_utc(snapshot_path, metadata).isoformat(),
         "algorithm_files": algorithm_hashes,
+        "runtime_environment": runtime_environment(),
         "simulation": {
             "max_objects": config.max_objects,
             "horizon_minutes": config.horizon_minutes,
@@ -102,7 +114,36 @@ def resimulate_snapshot(
     temporary_dir = Path(tempfile.mkdtemp(prefix=f".{collection_id}.", dir=output_root))
     try:
         all_objects = read_tles(snapshot_path)
-        objects = all_objects[: config.max_objects]
+        actual_catalog_ids = [obj.line1[2:7].strip() for obj in all_objects]
+        expected_metadata = {
+            "catalog_version": config.catalog_version,
+            "catalog_sha256": config.catalog_sha256,
+            "object_count": config.max_objects,
+            "requested_object_count": config.max_objects,
+            "preset": config.preset,
+        }
+        mismatches = {
+            key: {"expected": value, "observed": metadata.get(key)}
+            for key, value in expected_metadata.items()
+            if metadata.get(key) != value
+        }
+        if (
+            len(actual_catalog_ids) != config.max_objects
+            or len(set(actual_catalog_ids)) != config.max_objects
+            or catalog_id_set_sha256(actual_catalog_ids) != config.catalog_sha256
+        ):
+            mismatches["tle_catalog_ids"] = {
+                "expected_count": config.max_objects,
+                "expected_sha256": config.catalog_sha256,
+                "observed_count": len(actual_catalog_ids),
+                "observed_sha256": catalog_id_set_sha256(actual_catalog_ids),
+            }
+        if mismatches:
+            raise ValueError(
+                "Canonical resimulation frozen catalogue mismatch: "
+                + json.dumps(mismatches, sort_keys=True)
+            )
+        objects = all_objects
         satellites = build_satellites(objects)
         start_utc = _snapshot_utc(snapshot_path, metadata)
         screening: dict = {}
@@ -192,7 +233,21 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--pattern", default="tles_*.txt")
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help=(
+            "independent snapshot workers; completed fingerprinted runs are reused "
+            "on restart (default: 1)"
+        ),
+    )
     return parser.parse_args()
+
+
+def _resimulate_worker(snapshot: Path, output_root: Path, config) -> dict:
+    """Pickle-safe process worker for one immutable snapshot."""
+    return resimulate_snapshot(snapshot, output_root, config)
 
 
 def main() -> None:
@@ -205,20 +260,43 @@ def main() -> None:
         snapshots = snapshots[: args.limit]
     if not snapshots:
         raise ValueError(f"No snapshots match {args.snapshot_dir / args.pattern}")
+    workers = int(getattr(args, "workers", 1))
+    if workers <= 0:
+        raise ValueError("--workers must be positive")
     subset_requested = args.limit is not None or args.pattern != "tles_*.txt"
     if subset_requested and args.history == Path(config.resimulated_history):
         raise ValueError("Subset resimulation requires an explicit non-canonical --history path")
 
     completed: list[dict] = []
     failures: list[dict] = []
-    for snapshot in snapshots:
-        try:
-            result = resimulate_snapshot(snapshot, args.output_run_root, config)
-            completed.append(result)
-            print(f"{result['status']} -> {snapshot.name}")
-        except Exception as exc:
-            failures.append({"snapshot": str(snapshot), "error": str(exc)})
-            print(f"FAILED -> {snapshot.name}: {exc}")
+    if workers == 1:
+        for snapshot in snapshots:
+            try:
+                result = resimulate_snapshot(snapshot, args.output_run_root, config)
+                completed.append(result)
+                print(f"{result['status']} -> {snapshot.name}")
+            except Exception as exc:
+                failures.append({"snapshot": str(snapshot), "error": str(exc)})
+                print(f"FAILED -> {snapshot.name}: {exc}")
+    else:
+        with ProcessPoolExecutor(max_workers=workers) as executor:
+            future_to_snapshot = {
+                executor.submit(
+                    _resimulate_worker, snapshot, args.output_run_root, config
+                ): snapshot
+                for snapshot in snapshots
+            }
+            for future in as_completed(future_to_snapshot):
+                snapshot = future_to_snapshot[future]
+                try:
+                    result = future.result()
+                    completed.append(result)
+                    print(f"{result['status']} -> {snapshot.name}", flush=True)
+                except Exception as exc:
+                    failures.append({"snapshot": str(snapshot), "error": str(exc)})
+                    print(f"FAILED -> {snapshot.name}: {exc}", flush=True)
+    completed.sort(key=lambda item: str(item.get("collection_id", "")))
+    failures.sort(key=lambda item: str(item.get("snapshot", "")))
 
     history_report = None
     if not failures and completed:
@@ -234,18 +312,20 @@ def main() -> None:
             included_collection_ids=requested_ids,
             catalog_version=config.catalog_version,
             catalog_sha256=config.catalog_sha256 or None,
+            require_resimulation_integrity=True,
         )
     report = {
+        "schema_version": 2,
         "generated_utc": generated_utc(),
         "git_commit": git_commit_hash(),
         "experiment_config": str(config.path),
         "snapshots_requested": len(snapshots),
+        "workers": workers,
         "completed": completed,
         "failures": failures,
         "history": history_report,
     }
-    args.report.parent.mkdir(parents=True, exist_ok=True)
-    args.report.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    write_json_atomic(args.report, report)
     print(json.dumps({"completed": len(completed), "failures": len(failures)}, indent=2))
     if failures:
         raise SystemExit(1)

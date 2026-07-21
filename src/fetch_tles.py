@@ -13,6 +13,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import HTTPCookieProcessor, Request, build_opener, urlopen
 
+from space_debris.tle_validation import tle_checksum_is_valid
+
 
 CELESTRAK_GP_URL = "https://celestrak.org/NORAD/elements/gp.php?{query}={value}&FORMAT=TLE"
 SPACETRACK_LOGIN_URL = "https://www.space-track.org/ajaxauth/login"
@@ -230,14 +232,6 @@ def fetch_gp_with_retry(query: str, value: str, retries: int = 4, base_delay: fl
     if isinstance(last_error, CelesTrakHTTPError):
         raise CelesTrakHTTPError(last_error.status_code, message) from last_error
     raise TLETransportError(message) from last_error
-
-
-def tle_checksum_is_valid(line: str) -> bool:
-    if len(line) != 69 or not line[-1].isdigit():
-        return False
-    checksum = sum(int(char) for char in line[:68] if char.isdigit())
-    checksum += line[:68].count("-")
-    return checksum % 10 == int(line[-1])
 
 
 def validate_tle_pair(line1: str, line2: str, expected_catnr: str | None = None) -> str:

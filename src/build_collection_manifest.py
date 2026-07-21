@@ -7,6 +7,11 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
+from space_debris.provenance import write_json_atomic
+
+
+RUNTIME_PATH = "environment/runtime.json"
+
 
 def sha256(path: Path) -> str:
     digest = hashlib.sha256()
@@ -16,7 +21,28 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _validate_runtime_environment(root: Path) -> None:
+    runtime_path = root / RUNTIME_PATH
+    if not runtime_path.is_file() or runtime_path.is_symlink():
+        raise ValueError(
+            f"Authoritative schema-2 manifests require a regular {RUNTIME_PATH} file"
+        )
+    try:
+        runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Invalid runtime environment record: {runtime_path}: {exc}") from exc
+    if (
+        not isinstance(runtime, dict)
+        or runtime.get("schema_version") != 1
+        or not isinstance(runtime.get("packages"), list)
+        or not runtime.get("python")
+        or not runtime.get("platform")
+    ):
+        raise ValueError(f"Incomplete runtime environment record: {runtime_path}")
+
+
 def build_manifest(root: Path) -> dict:
+    _validate_runtime_environment(root)
     files = []
     for path in sorted(item for item in root.rglob("*") if item.is_file()):
         if path.name == "manifest.json":
@@ -29,7 +55,7 @@ def build_manifest(root: Path) -> dict:
             }
         )
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "generated_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "git_commit": os.getenv("GITHUB_SHA", "unknown"),
         "github_run_id": os.getenv("GITHUB_RUN_ID", ""),
@@ -48,7 +74,7 @@ def main() -> None:
     if not args.root.is_dir():
         raise SystemExit(f"Collection root does not exist: {args.root}")
     output = args.output or args.root / "manifest.json"
-    output.write_text(json.dumps(build_manifest(args.root), indent=2) + "\n", encoding="utf-8")
+    write_json_atomic(output, build_manifest(args.root))
 
 
 if __name__ == "__main__":

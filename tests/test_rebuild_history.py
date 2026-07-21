@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
+
+import pytest
 
 from rebuild_history import rebuild_latest_schema_history
 
@@ -179,3 +182,47 @@ def test_rebuild_filters_to_frozen_catalog_version(tmp_path):
         rows = list(csv.DictReader(stream))
     assert rows[0]["catalog_version"] == "iac26-75-v1"
     assert rows[0]["catalog_sha256"] == "hash-iac26-75-v1"
+
+
+def test_canonical_rebuild_requires_hash_verified_resimulation_dataset(tmp_path):
+    run_root = tmp_path / "runs"
+    snapshots = tmp_path / "snapshots"
+    snapshots.mkdir()
+    dataset = run_root / "run" / "conjunction_dataset.csv"
+    _write_dataset(
+        dataset,
+        ["snapshot_utc", "object_1", "object_2", "min_distance_km"],
+        ["2026-01-01Z", "A", "B", "10"],
+    )
+    (dataset.parent / "resimulation.json").write_text(
+        json.dumps(
+            {
+                "run_fingerprint": "f" * 64,
+                "output_sha256": {
+                    "conjunction_dataset.csv": hashlib.sha256(
+                        dataset.read_bytes()
+                    ).hexdigest()
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    output = tmp_path / "history.csv"
+
+    report = rebuild_latest_schema_history(
+        run_root,
+        snapshots,
+        output,
+        require_resimulation_integrity=True,
+    )
+    assert report["output_sha256"] == hashlib.sha256(output.read_bytes()).hexdigest()
+    assert report["resimulation_integrity_required"] is True
+
+    dataset.write_text("tampered\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="dataset hash mismatch"):
+        rebuild_latest_schema_history(
+            run_root,
+            snapshots,
+            output,
+            require_resimulation_integrity=True,
+        )

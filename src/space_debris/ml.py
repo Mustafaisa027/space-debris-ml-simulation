@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
 from numbers import Integral
 from pathlib import Path
@@ -24,6 +25,7 @@ from sklearn.svm import SVC
 from sklearn.tree import DecisionTreeClassifier
 
 from space_debris.provenance import write_csv_text_with_provenance
+from space_debris.tle_validation import partition_tle_hash_quality
 
 
 # NOTE: ``risk_score``, ``risk_label`` and ``fixed_threshold_alarm`` are
@@ -56,6 +58,34 @@ FEATURES = [
     "tangential_velocity_km_s",
     "approach_angle_deg",
 ]
+
+# Pre-specified primary predictors available at the observation snapshot,
+# before the forward SGP4 TCA search is evaluated.  The publication model must
+# not receive the future-propagation quantities that define (or reconstruct)
+# the deterministic proxy label.
+SNAPSHOT_ONLY_FEATURES = [
+    "current_distance_km",
+    "altitude_difference_km",
+    "max_tle_age_hours",
+    "radial_velocity_km_s",
+    "tangential_velocity_km_s",
+    "approach_angle_deg",
+]
+
+FEATURE_SETS = {
+    "snapshot_only": tuple(SNAPSHOT_ONLY_FEATURES),
+    "full_rule_recovery": tuple(FEATURES),
+}
+
+
+def feature_set_by_name(name: str) -> list[str]:
+    """Return a copy of a pre-registered feature set."""
+    try:
+        return list(FEATURE_SETS[name])
+    except KeyError as exc:
+        raise ValueError(
+            f"Unknown feature set {name!r}; expected one of {sorted(FEATURE_SETS)}"
+        ) from exc
 
 FEATURES_WITHOUT_LABEL_RULE = [
     feature
@@ -116,6 +146,23 @@ REPORT_COLUMNS = [
     "train_positive_snapshots",
     "test_positive_snapshots",
     "observation_span_days",
+    "evaluation_window_start_utc",
+    "evaluation_window_end_utc",
+    "expected_snapshot_slots",
+    "observed_snapshot_times",
+    "occupied_snapshot_slots",
+    "duplicate_slot_snapshot_times",
+    "duplicate_slot_rows_excluded",
+    "unique_tle_input_hashes",
+    "tle_input_hash_diversity_fraction",
+    "max_identical_tle_hash_run_bins",
+    "maximum_observed_tle_age_hours",
+    "orphan_history_rows_excluded",
+    "coverage_source",
+    "snapshot_coverage_fraction",
+    "max_nominal_bin_gap_hours",
+    "max_snapshot_gap_hours",
+    "window_excluded_rows",
     "excluded_rows",
     "cutoff_utc",
     "split",
@@ -126,6 +173,26 @@ REPORT_COLUMNS = [
 PAIR_COLUMNS = ["object_1", "object_2"]
 PAIR_CATALOG_ID_COLUMNS = ["object_1_catalog_id", "object_2_catalog_id"]
 PAIR_SPLIT_SEED = "iac26-pair-split-v1"
+
+WINDOW_QUALITY_KEYS = (
+    "evaluation_window_start_utc",
+    "evaluation_window_end_utc",
+    "expected_snapshot_slots",
+    "observed_snapshot_times",
+    "occupied_snapshot_slots",
+    "duplicate_slot_snapshot_times",
+    "duplicate_slot_rows_excluded",
+    "unique_tle_input_hashes",
+    "tle_input_hash_diversity_fraction",
+    "max_identical_tle_hash_run_bins",
+    "maximum_observed_tle_age_hours",
+    "orphan_history_rows_excluded",
+    "coverage_source",
+    "snapshot_coverage_fraction",
+    "max_nominal_bin_gap_hours",
+    "max_snapshot_gap_hours",
+    "window_excluded_rows",
+)
 
 
 class InsufficientGroupedSplitError(ValueError):
@@ -189,6 +256,206 @@ def _observation_span_days(df: pd.DataFrame, time_column: str | None) -> float |
         return None
     timestamps = _validated_times(df, time_column)
     return float((timestamps.max() - timestamps.min()).total_seconds() / 86400.0)
+
+
+def _apply_collection_window(
+    df: pd.DataFrame,
+    time_column: str | None,
+    *,
+    start_utc: str | None,
+    end_utc: str | None,
+    poll_interval_hours: float | None,
+    snapshot_records: Sequence[dict[str, object]] | None = None,
+) -> tuple[pd.DataFrame, dict[str, object]]:
+    """Select the frozen half-open experiment window and measure cadence.
+
+    Coverage partitions the frozen half-open window into equal half-open cadence
+    bins using authoritative snapshot timestamps. Retries in one bin cannot hide
+    a missing bin elsewhere, and delayed GitHub jobs are never rounded into a
+    future nominal slot.
+    """
+    values = (start_utc, end_utc, poll_interval_hours)
+    if not any(value is not None for value in values):
+        return df, {key: None for key in WINDOW_QUALITY_KEYS}
+    if not all(value is not None for value in values) or not time_column:
+        raise ValueError(
+            "collection window requires start_utc, end_utc, poll_interval_hours and time_column"
+        )
+    poll_interval_hours = float(poll_interval_hours)
+    if not np.isfinite(poll_interval_hours) or poll_interval_hours <= 0:
+        raise ValueError("poll_interval_hours must be positive and finite")
+    start = pd.Timestamp(start_utc)
+    end = pd.Timestamp(end_utc)
+    if start.tzinfo is None or end.tzinfo is None:
+        raise ValueError("collection window timestamps must include a timezone")
+    start = start.tz_convert("UTC")
+    end = end.tz_convert("UTC")
+    if end <= start:
+        raise ValueError("collection window end_utc must be after start_utc")
+    duration_hours = float((end - start).total_seconds() / 3600.0)
+    expected_slots_float = duration_hours / poll_interval_hours
+    expected_slots = int(round(expected_slots_float))
+    if expected_slots <= 0 or not np.isclose(expected_slots_float, expected_slots, atol=1e-9):
+        raise ValueError("collection window duration must be divisible by poll_interval_hours")
+
+    timestamps = _validated_times(df, time_column)
+    history_window_mask = timestamps.ge(start) & timestamps.lt(end)
+    record_collection_ids: set[str] | None = None
+    if snapshot_records is not None:
+        normalized_records: list[tuple[str, pd.Timestamp, str]] = []
+        seen_record_ids: dict[str, tuple[pd.Timestamp, str]] = {}
+        for record in snapshot_records:
+            if not isinstance(record, dict):
+                raise ValueError("snapshot_records entries must be mappings")
+            collection_id = str(record.get("collection_id", "")).strip()
+            if not collection_id:
+                raise ValueError("snapshot_records require non-empty collection_id")
+            timestamp = pd.Timestamp(record.get("snapshot_utc"))
+            if timestamp.tzinfo is None:
+                raise ValueError("snapshot_records timestamps must include a timezone")
+            timestamp = timestamp.tz_convert("UTC")
+            input_sha256 = str(record.get("input_sha256", "")).strip().lower()
+            if len(input_sha256) != 64 or any(
+                character not in "0123456789abcdef" for character in input_sha256
+            ):
+                raise ValueError("snapshot_records require a valid input_sha256")
+            identity = (timestamp, input_sha256)
+            if collection_id in seen_record_ids and seen_record_ids[collection_id] != identity:
+                raise ValueError(f"Conflicting snapshot_records for collection_id={collection_id}")
+            seen_record_ids[collection_id] = identity
+        normalized_records = sorted(
+            (
+                (collection_id, identity[0], identity[1])
+                for collection_id, identity in seen_record_ids.items()
+            ),
+            key=lambda item: (item[1], item[0]),
+        )
+        candidates = [
+            (collection_id, timestamp, input_sha256)
+            for collection_id, timestamp, input_sha256 in normalized_records
+            if start <= timestamp < end
+        ]
+        record_collection_ids = {
+            collection_id for collection_id, _, _ in normalized_records
+        }
+        if "collection_id" not in df.columns:
+            raise ValueError("snapshot_records require collection_id in model history")
+        history_ids = df["collection_id"].fillna("").astype(str).str.strip()
+        if history_ids.eq("").any():
+            raise ValueError("model history collection_id cannot be empty")
+        coverage_source = "resimulation_snapshot_records"
+    else:
+        candidates = [
+            (timestamp.isoformat(), timestamp, None)
+            for timestamp in pd.Index(timestamps.loc[history_window_mask].unique()).sort_values()
+        ]
+        coverage_source = "history_candidate_rows"
+
+    unique_times = pd.Index(sorted({timestamp for _, timestamp, _ in candidates}))
+    chosen_by_slot: dict[int, tuple[pd.Timestamp, str, str | None]] = {}
+    for collection_id, timestamp, input_sha256 in candidates:
+        elapsed_hours = float((timestamp - start).total_seconds() / 3600.0)
+        slot = int(np.floor(elapsed_hours / poll_interval_hours))
+        candidate = (timestamp, collection_id, input_sha256)
+        if slot not in chosen_by_slot or candidate < chosen_by_slot[slot]:
+            chosen_by_slot[slot] = candidate
+    occupied = sorted(chosen_by_slot)
+    chosen_times = {candidate[0] for candidate in chosen_by_slot.values()}
+    chosen_collection_ids = {candidate[1] for candidate in chosen_by_slot.values()}
+    chosen_input_hashes = {
+        candidate[2] for candidate in chosen_by_slot.values() if candidate[2] is not None
+    }
+    ordered_input_hashes = [
+        chosen_by_slot[slot][2] for slot in occupied if chosen_by_slot[slot][2] is not None
+    ]
+    maximum_identical_hash_run = 0
+    current_identical_hash_run = 0
+    previous_input_hash: str | None = None
+    for input_hash in ordered_input_hashes:
+        if input_hash == previous_input_hash:
+            current_identical_hash_run += 1
+        else:
+            current_identical_hash_run = 1
+            previous_input_hash = input_hash
+        maximum_identical_hash_run = max(
+            maximum_identical_hash_run, current_identical_hash_run
+        )
+    if snapshot_records is not None:
+        history_ids = df["collection_id"].fillna("").astype(str).str.strip()
+        selected_mask = history_window_mask & history_ids.isin(chosen_collection_ids)
+        orphan_history_rows = int(
+            (history_window_mask & ~history_ids.isin(record_collection_ids)).sum()
+        )
+    else:
+        selected_mask = history_window_mask & timestamps.isin(chosen_times)
+        orphan_history_rows = 0
+    selected = df.loc[selected_mask].copy()
+    duplicate_slot_times = max(0, len(unique_times) - len(chosen_times))
+    duplicate_slot_rows = int(
+        (history_window_mask & ~selected_mask).sum() - orphan_history_rows
+    )
+    if occupied:
+        slot_gaps = [occupied[0] * poll_interval_hours]
+        slot_gaps.extend(
+            (right - left) * poll_interval_hours
+            for left, right in zip(occupied, occupied[1:])
+        )
+        # In a half-open window, a complete cadence still leaves one normal
+        # poll interval between the final nominal snapshot and ``end``.
+        slot_gaps.append((expected_slots - occupied[-1]) * poll_interval_hours)
+        max_nominal_gap_hours = float(max(slot_gaps))
+        ordered_snapshot_times = sorted(chosen_times)
+        actual_gaps = [
+            float((ordered_snapshot_times[0] - start).total_seconds() / 3600.0)
+        ]
+        actual_gaps.extend(
+            float((right - left).total_seconds() / 3600.0)
+            for left, right in zip(
+                ordered_snapshot_times, ordered_snapshot_times[1:]
+            )
+        )
+        actual_gaps.append(
+            float((end - ordered_snapshot_times[-1]).total_seconds() / 3600.0)
+        )
+        max_gap_hours = float(max(actual_gaps))
+    else:
+        max_nominal_gap_hours = duration_hours
+        max_gap_hours = duration_hours
+    quality = {
+        "evaluation_window_start_utc": start.isoformat().replace("+00:00", "Z"),
+        "evaluation_window_end_utc": end.isoformat().replace("+00:00", "Z"),
+        "expected_snapshot_slots": expected_slots,
+        "observed_snapshot_times": int(len(unique_times)),
+        "occupied_snapshot_slots": int(len(occupied)),
+        "duplicate_slot_snapshot_times": int(duplicate_slot_times),
+        "duplicate_slot_rows_excluded": duplicate_slot_rows,
+        "unique_tle_input_hashes": (
+            int(len(chosen_input_hashes)) if snapshot_records is not None else None
+        ),
+        "tle_input_hash_diversity_fraction": (
+            float(len(chosen_input_hashes) / len(occupied))
+            if snapshot_records is not None and occupied
+            else (0.0 if snapshot_records is not None else None)
+        ),
+        "max_identical_tle_hash_run_bins": (
+            int(maximum_identical_hash_run) if snapshot_records is not None else None
+        ),
+        "maximum_observed_tle_age_hours": None,
+        "orphan_history_rows_excluded": orphan_history_rows,
+        "coverage_source": coverage_source,
+        "snapshot_coverage_fraction": float(len(occupied) / expected_slots),
+        "max_nominal_bin_gap_hours": max_nominal_gap_hours,
+        "max_snapshot_gap_hours": max_gap_hours,
+        "window_excluded_rows": int((~selected_mask).sum()),
+    }
+    return selected, quality
+
+
+def _partition_tle_hash_quality(
+    frame: pd.DataFrame,
+    snapshot_records: Sequence[dict[str, object]],
+) -> dict[str, object]:
+    return partition_tle_hash_quality(frame, snapshot_records)
 
 
 def _validated_minimum_support(
@@ -437,6 +704,23 @@ def _not_enough_data_row(model: str, note: str, train_rows=None, test_rows=None,
         "train_positive_snapshots": None,
         "test_positive_snapshots": None,
         "observation_span_days": None,
+        "evaluation_window_start_utc": None,
+        "evaluation_window_end_utc": None,
+        "expected_snapshot_slots": None,
+        "observed_snapshot_times": None,
+        "occupied_snapshot_slots": None,
+        "duplicate_slot_snapshot_times": None,
+        "duplicate_slot_rows_excluded": None,
+        "unique_tle_input_hashes": None,
+        "tle_input_hash_diversity_fraction": None,
+        "max_identical_tle_hash_run_bins": None,
+        "maximum_observed_tle_age_hours": None,
+        "orphan_history_rows_excluded": None,
+        "coverage_source": None,
+        "snapshot_coverage_fraction": None,
+        "max_nominal_bin_gap_hours": None,
+        "max_snapshot_gap_hours": None,
+        "window_excluded_rows": None,
         "excluded_rows": None,
         "cutoff_utc": None,
         "split": split,
@@ -450,6 +734,7 @@ def _evaluate_split(
     feature_columns: Sequence[str] = FEATURES,
     time_column: str | None = None,
     observation_span_days: float | None = None,
+    dataset_quality: dict[str, object] | None = None,
 ) -> list[dict]:
     """Fit every model on one train/test split and score it. Shared by the
     single chronological split (compare_models) and each fold of
@@ -470,6 +755,7 @@ def _evaluate_split(
     trainable = y_train.nunique() >= 2
     support = _split_positive_support(split, time_column)
     support["observation_span_days"] = observation_span_days
+    support.update(dataset_quality or {})
 
     rows: list[dict] = []
     for name, model in models.items():
@@ -638,9 +924,10 @@ def compare_to_baseline_pr_auc(report: pd.DataFrame) -> str:
         if row["model"] == "fixed_threshold" or pd.isna(row["pr_auc"]):
             continue
         delta = row["pr_auc"] - baseline_pr_auc
-        verdict = "beats" if delta > 0 else "does not beat"
+        verdict = "observed higher than" if delta > 0 else "not observed higher than"
         lines.append(
-            f"{row['model']} PR-AUC = {row['pr_auc']:.4f} ({verdict} baseline, delta={delta:+.4f})"
+            f"{row['model']} PR-AUC = {row['pr_auc']:.4f} ({verdict} baseline, delta={delta:+.4f}; "
+            "uncertainty is reported separately)"
         )
     return "\n".join(lines)
 
@@ -660,6 +947,15 @@ def compare_models(
     minimum_observation_span_days: float | None = None,
     required_catalog_version: str | None = None,
     required_catalog_sha256: str | None = None,
+    collection_start_utc: str | None = None,
+    collection_end_utc: str | None = None,
+    poll_interval_hours: float | None = None,
+    min_snapshot_coverage_fraction: float | None = None,
+    max_snapshot_gap_hours: float | None = None,
+    min_tle_hash_diversity_fraction: float | None = None,
+    max_identical_tle_hash_run_bins: int | None = None,
+    maximum_tle_age_hours: float | None = None,
+    snapshot_records: Sequence[dict[str, object]] | None = None,
 ) -> pd.DataFrame:
     df = pd.read_csv(dataset_path, comment="#")
     selected_features = _validated_feature_columns(feature_columns)
@@ -670,6 +966,43 @@ def compare_models(
             raise ValueError("minimum_observation_span_days must be positive and finite")
         if not time_column:
             raise ValueError("minimum_observation_span_days requires time_column")
+    window_values = (
+        collection_start_utc,
+        collection_end_utc,
+        poll_interval_hours,
+        min_snapshot_coverage_fraction,
+        max_snapshot_gap_hours,
+        min_tle_hash_diversity_fraction,
+        max_identical_tle_hash_run_bins,
+    )
+    if any(value is not None for value in window_values) and not all(
+        value is not None for value in window_values
+    ):
+        raise ValueError("collection window and cadence gates must be configured together")
+    if min_snapshot_coverage_fraction is not None:
+        min_snapshot_coverage_fraction = float(min_snapshot_coverage_fraction)
+        max_snapshot_gap_hours = float(max_snapshot_gap_hours)
+        if not 0 < min_snapshot_coverage_fraction <= 1:
+            raise ValueError("min_snapshot_coverage_fraction must be in (0, 1]")
+        if not np.isfinite(max_snapshot_gap_hours) or max_snapshot_gap_hours <= 0:
+            raise ValueError("max_snapshot_gap_hours must be positive and finite")
+        min_tle_hash_diversity_fraction = float(min_tle_hash_diversity_fraction)
+        if not 0 < min_tle_hash_diversity_fraction <= 1:
+            raise ValueError("min_tle_hash_diversity_fraction must be in (0, 1]")
+        if (
+            isinstance(max_identical_tle_hash_run_bins, bool)
+            or not isinstance(max_identical_tle_hash_run_bins, Integral)
+            or max_identical_tle_hash_run_bins <= 0
+        ):
+            raise ValueError("max_identical_tle_hash_run_bins must be a positive integer")
+        if snapshot_records is None:
+            raise ValueError("TLE hash-diversity gates require snapshot_records")
+    if maximum_tle_age_hours is not None:
+        maximum_tle_age_hours = float(maximum_tle_age_hours)
+        if not np.isfinite(maximum_tle_age_hours) or maximum_tle_age_hours <= 0:
+            raise ValueError("maximum_tle_age_hours must be positive and finite")
+        if "max_tle_age_hours" not in df.columns:
+            raise ValueError("TLE-age quality gate requires max_tle_age_hours column")
     missing = [
         feature
         for feature in selected_features + ["risk_label", "fixed_threshold_alarm", "min_distance_km"]
@@ -677,6 +1010,14 @@ def compare_models(
     ]
     if missing:
         raise ValueError(f"Dataset is missing required columns: {missing}")
+    df, window_quality = _apply_collection_window(
+        df,
+        time_column,
+        start_utc=collection_start_utc,
+        end_utc=collection_end_utc,
+        poll_interval_hours=poll_interval_hours,
+        snapshot_records=snapshot_records,
+    )
     if required_catalog_version is not None:
         if "catalog_version" not in df.columns:
             raise ValueError("Frozen-cohort evaluation requires catalog_version column")
@@ -701,6 +1042,11 @@ def compare_models(
                 "Catalog ID-set hash mismatch: "
                 f"required={required_catalog_sha256!r}, observed={observed_hashes!r}"
             )
+    if maximum_tle_age_hours is not None:
+        observed_ages = pd.to_numeric(df["max_tle_age_hours"], errors="coerce")
+        if observed_ages.isna().any() or not np.isfinite(observed_ages).all():
+            raise ValueError("max_tle_age_hours must contain only finite numeric values")
+        window_quality["maximum_observed_tle_age_hours"] = float(observed_ages.max())
     pair_support_requested = any(
         key in required_support
         for key in ("train_positive_pairs", "test_positive_pairs")
@@ -733,15 +1079,76 @@ def compare_models(
             f"{config_summary}, minimum_observation_span_days="
             f"{minimum_observation_span_days:.6f}"
         )
+    if collection_start_utc is not None:
+        config_summary = (
+            f"{config_summary}, collection_window={collection_start_utc}/{collection_end_utc}, "
+            f"poll_interval_hours={poll_interval_hours}, "
+            f"min_snapshot_coverage_fraction={min_snapshot_coverage_fraction}, "
+            f"max_snapshot_gap_hours={max_snapshot_gap_hours}, "
+            f"min_tle_hash_diversity_fraction={min_tle_hash_diversity_fraction}, "
+            f"max_identical_tle_hash_run_bins={max_identical_tle_hash_run_bins}, "
+            f"coverage_source={'resimulation_report' if snapshot_records is not None else 'history'}"
+        )
+    if maximum_tle_age_hours is not None:
+        config_summary = (
+            f"{config_summary}, maximum_tle_age_hours={maximum_tle_age_hours}"
+        )
     if required_catalog_version is not None:
         config_summary = f"{config_summary}, catalog_version={required_catalog_version}"
     if required_catalog_sha256 is not None:
         config_summary = f"{config_summary}, catalog_sha256={required_catalog_sha256}"
 
-    if df.empty or df["risk_label"].nunique() < 2 or len(df) < 6:
-        report = pd.DataFrame(
-            [_not_enough_data_row("not_enough_data", "Need at least 6 rows and two risk_label classes.")]
+    window_failures: list[str] = []
+    if min_snapshot_coverage_fraction is not None:
+        coverage = float(window_quality["snapshot_coverage_fraction"])
+        observed_gap = float(window_quality["max_snapshot_gap_hours"])
+        if coverage < min_snapshot_coverage_fraction:
+            window_failures.append(
+                f"snapshot_coverage_fraction={coverage:.6f} < "
+                f"required={min_snapshot_coverage_fraction:.6f}"
+            )
+        if observed_gap > max_snapshot_gap_hours:
+            window_failures.append(
+                f"max_snapshot_gap_hours={observed_gap:.6f} > "
+                f"allowed={max_snapshot_gap_hours:.6f}"
+            )
+        observed_diversity = float(window_quality["tle_input_hash_diversity_fraction"])
+        observed_identical_run = int(window_quality["max_identical_tle_hash_run_bins"])
+        if observed_diversity < min_tle_hash_diversity_fraction:
+            window_failures.append(
+                f"tle_input_hash_diversity_fraction={observed_diversity:.6f} < "
+                f"required={min_tle_hash_diversity_fraction:.6f}"
+            )
+        if observed_identical_run > max_identical_tle_hash_run_bins:
+            window_failures.append(
+                f"max_identical_tle_hash_run_bins={observed_identical_run} > "
+                f"allowed={max_identical_tle_hash_run_bins}"
+            )
+    if maximum_tle_age_hours is not None:
+        observed_tle_age = float(window_quality["maximum_observed_tle_age_hours"])
+        if observed_tle_age > maximum_tle_age_hours:
+            window_failures.append(
+                f"maximum_observed_tle_age_hours={observed_tle_age:.6f} > "
+                f"allowed={maximum_tle_age_hours:.6f}"
+            )
+    if window_failures:
+        row = _not_enough_data_row(
+            "not_enough_data",
+            "Publication quality gate failed: " + "; ".join(window_failures),
         )
+        row.update(window_quality)
+        report = pd.DataFrame([row])[REPORT_COLUMNS]
+        write_csv_text_with_provenance(
+            report_path, report.to_csv(index=False), source, config_summary
+        )
+        return report
+
+    if df.empty or df["risk_label"].nunique() < 2 or len(df) < 6:
+        row = _not_enough_data_row(
+            "not_enough_data", "Need at least 6 in-window rows and two risk_label classes."
+        )
+        row.update(window_quality)
+        report = pd.DataFrame([row])[REPORT_COLUMNS]
         write_csv_text_with_provenance(report_path, report.to_csv(index=False), source, config_summary)
         return report
 
@@ -754,12 +1161,15 @@ def compare_models(
             pair_seed=pair_seed,
         )
     except InsufficientGroupedSplitError as exc:
-        report = pd.DataFrame([_not_enough_data_row("not_enough_data", str(exc))])
+        row = _not_enough_data_row("not_enough_data", str(exc))
+        row.update(window_quality)
+        report = pd.DataFrame([row])[REPORT_COLUMNS]
         write_csv_text_with_provenance(report_path, report.to_csv(index=False), source, config_summary)
         return report
     support = _split_positive_support(split, time_column)
     observation_span_days = _observation_span_days(df, time_column)
     support["observation_span_days"] = observation_span_days
+    support.update(window_quality)
     train_classes = split.train["risk_label"].nunique()
     test_classes = split.test["risk_label"].nunique()
     if train_classes < 2 or test_classes < 2:
@@ -813,6 +1223,7 @@ def compare_models(
         feature_columns=selected_features,
         time_column=time_column,
         observation_span_days=observation_span_days,
+        dataset_quality=window_quality,
     )
 
     report = pd.DataFrame(rows)[REPORT_COLUMNS]
@@ -831,6 +1242,18 @@ def time_series_cv_report(
     test_pair_fraction: float = 0.25,
     pair_seed: str = PAIR_SPLIT_SEED,
     feature_columns: Sequence[str] | None = None,
+    required_catalog_version: str | None = None,
+    required_catalog_sha256: str | None = None,
+    collection_start_utc: str | None = None,
+    collection_end_utc: str | None = None,
+    poll_interval_hours: float | None = None,
+    maximum_tle_age_hours: float | None = None,
+    snapshot_records: Sequence[dict[str, object]] | None = None,
+    min_tle_hash_diversity_fraction: float | None = None,
+    max_identical_tle_hash_run_bins: int | None = None,
+    primary_model: str | None = None,
+    adaptability_min_folds: int = 5,
+    minimum_support: dict[str, int] | None = None,
 ) -> pd.DataFrame:
     """Pair-held-out expanding-window validation over whole timestamp blocks.
 
@@ -840,6 +1263,33 @@ def time_series_cv_report(
     both pair memorization and future leakage.
     """
     df = pd.read_csv(dataset_path, comment="#")
+    if (
+        isinstance(adaptability_min_folds, bool)
+        or not isinstance(adaptability_min_folds, int)
+        or adaptability_min_folds <= 0
+    ):
+        raise ValueError("adaptability_min_folds must be a positive integer")
+    required_support = _validated_minimum_support(minimum_support)
+    if (min_tle_hash_diversity_fraction is None) != (
+        max_identical_tle_hash_run_bins is None
+    ):
+        raise ValueError("CV TLE diversity gates must be configured together")
+    if min_tle_hash_diversity_fraction is not None:
+        min_tle_hash_diversity_fraction = float(min_tle_hash_diversity_fraction)
+        if not 0 < min_tle_hash_diversity_fraction <= 1:
+            raise ValueError("min_tle_hash_diversity_fraction must be in (0, 1]")
+        if (
+            isinstance(max_identical_tle_hash_run_bins, bool)
+            or not isinstance(max_identical_tle_hash_run_bins, Integral)
+            or max_identical_tle_hash_run_bins <= 0
+        ):
+            raise ValueError("max_identical_tle_hash_run_bins must be a positive integer")
+        if snapshot_records is None:
+            raise ValueError("CV TLE diversity gates require snapshot_records")
+    fold_report_path = report_path.with_name(report_path.stem + "_folds.csv")
+    adaptability_path = report_path.with_name(report_path.stem + "_adaptability.csv")
+    fold_report_path.unlink(missing_ok=True)
+    adaptability_path.unlink(missing_ok=True)
     selected_features = _validated_feature_columns(feature_columns)
     missing = [
         feature
@@ -850,12 +1300,53 @@ def time_series_cv_report(
         raise ValueError(f"Dataset is missing required columns: {missing}")
     if time_column not in df.columns:
         raise ValueError(f"time_column={time_column!r} not found in dataset")
+    df, window_quality = _apply_collection_window(
+        df,
+        time_column,
+        start_utc=collection_start_utc,
+        end_utc=collection_end_utc,
+        poll_interval_hours=poll_interval_hours,
+        snapshot_records=snapshot_records,
+    )
+    if maximum_tle_age_hours is not None:
+        maximum_tle_age_hours = float(maximum_tle_age_hours)
+        if not np.isfinite(maximum_tle_age_hours) or maximum_tle_age_hours <= 0:
+            raise ValueError("maximum_tle_age_hours must be positive and finite")
+        if "max_tle_age_hours" not in df.columns:
+            raise ValueError("TLE-age quality gate requires max_tle_age_hours column")
+        observed_ages = pd.to_numeric(df["max_tle_age_hours"], errors="coerce")
+        if (
+            observed_ages.isna().any()
+            or not np.isfinite(observed_ages).all()
+            or float(observed_ages.max()) > maximum_tle_age_hours
+        ):
+            raise ValueError("Cross-validation data fails the maximum TLE-age quality gate")
+        window_quality["maximum_observed_tle_age_hours"] = float(observed_ages.max())
+    if required_catalog_version is not None:
+        if "catalog_version" not in df.columns:
+            raise ValueError("Dataset is missing required column: catalog_version")
+        observed = sorted(df["catalog_version"].dropna().astype(str).unique())
+        if observed != [required_catalog_version]:
+            raise ValueError(
+                f"Catalog cohort mismatch: required={required_catalog_version!r}, observed={observed!r}"
+            )
+    if required_catalog_sha256 is not None:
+        if "catalog_sha256" not in df.columns:
+            raise ValueError("Dataset is missing required column: catalog_sha256")
+        observed = sorted(df["catalog_sha256"].dropna().astype(str).unique())
+        if observed != [required_catalog_sha256]:
+            raise ValueError(
+                f"Catalog ID-set hash mismatch: required={required_catalog_sha256!r}, observed={observed!r}"
+            )
 
     if not source:
         source = f"dataset={dataset_path}"
     if not config_summary:
         config_summary = f"time_column={time_column}, n_splits={n_splits}"
-    config_summary = f"{config_summary}, features={'|'.join(selected_features)}"
+    config_summary = (
+        f"{config_summary}, features={'|'.join(selected_features)}, "
+        f"window_quality={json.dumps(window_quality, sort_keys=True, default=str)}"
+    )
 
     if len(df) < n_splits + 1 or df["risk_label"].nunique() < 2:
         report = pd.DataFrame(
@@ -883,6 +1374,20 @@ def time_series_cv_report(
         )
         write_csv_text_with_provenance(report_path, report.to_csv(index=False), source, config_summary)
         return report
+    if required_catalog_version is not None or required_catalog_sha256 is not None:
+        missing_identity = [
+            column for column in PAIR_CATALOG_ID_COLUMNS if column not in df.columns
+        ]
+        if missing_identity:
+            raise ValueError(
+                f"Frozen CV requires catalogue pair-ID columns: {missing_identity}"
+            )
+        identities = df[PAIR_CATALOG_ID_COLUMNS]
+        if identities.isna().any().any() or (
+            identities.astype(str).apply(lambda column: column.str.strip().eq(""))
+        ).any().any():
+            raise ValueError("Frozen CV requires non-empty catalogue IDs for every row")
+
     pair_assignment = {
         pair_id: _pair_is_test(pair_id, test_pair_fraction, pair_seed)
         for pair_id in pair_ids.unique()
@@ -906,14 +1411,43 @@ def time_series_cv_report(
             split_name=f"pair_grouped_cv_fold_{fold_index}",
             metadata={"train_time_blocks": len(train_times), "test_time_blocks": len(test_times)},
         )
+        support = _split_positive_support(split, time_column)
+        if any(support[key] < minimum for key, minimum in required_support.items()):
+            continue
+        fold_tle_quality = None
+        if min_tle_hash_diversity_fraction is not None:
+            train_tle_quality = _partition_tle_hash_quality(split.train, snapshot_records)
+            test_tle_quality = _partition_tle_hash_quality(split.test, snapshot_records)
+            if any(
+                quality["tle_input_hash_diversity_fraction"]
+                < min_tle_hash_diversity_fraction
+                or quality["max_identical_tle_hash_run_bins"]
+                > max_identical_tle_hash_run_bins
+                for quality in (train_tle_quality, test_tle_quality)
+            ):
+                continue
+            fold_tle_quality = {"train": train_tle_quality, "test": test_tle_quality}
         valid_partitions += 1
-        fold_rows.extend(
-            _evaluate_split(
-                split,
-                feature_columns=selected_features,
-                time_column=time_column,
-            )
+        evaluated_rows = _evaluate_split(
+            split,
+            feature_columns=selected_features,
+            time_column=time_column,
         )
+        if fold_tle_quality is not None:
+            for row in evaluated_rows:
+                row["train_tle_hash_diversity_fraction"] = fold_tle_quality["train"][
+                    "tle_input_hash_diversity_fraction"
+                ]
+                row["test_tle_hash_diversity_fraction"] = fold_tle_quality["test"][
+                    "tle_input_hash_diversity_fraction"
+                ]
+                row["train_max_identical_tle_hash_run_bins"] = fold_tle_quality["train"][
+                    "max_identical_tle_hash_run_bins"
+                ]
+                row["test_max_identical_tle_hash_run_bins"] = fold_tle_quality["test"][
+                    "max_identical_tle_hash_run_bins"
+                ]
+        fold_rows.extend(evaluated_rows)
 
     if not fold_rows:
         report = pd.DataFrame(
@@ -924,6 +1458,43 @@ def time_series_cv_report(
         return report
 
     fold_df = pd.DataFrame(fold_rows)
+    write_csv_text_with_provenance(
+        fold_report_path,
+        fold_df.to_csv(index=False),
+        source=source,
+        config_summary=f"{config_summary}, artifact=fold_level",
+    )
+    baseline = fold_df.loc[fold_df["model"].eq("fixed_threshold"), ["split", "pr_auc"]].rename(
+        columns={"pr_auc": "baseline_pr_auc"}
+    )
+    adaptability_rows: list[dict[str, object]] = []
+    for model_name, model_rows in fold_df.loc[
+        ~fold_df["model"].eq("fixed_threshold")
+    ].groupby("model"):
+        paired = model_rows[["split", "pr_auc"]].merge(
+            baseline, on="split", how="inner", validate="one_to_one"
+        ).dropna()
+        deltas = (paired["pr_auc"] - paired["baseline_pr_auc"]).astype(float).to_numpy()
+        adaptability_rows.append(
+            temporal_consistency_summary(
+                str(model_name),
+                deltas,
+                primary_model=primary_model,
+                requested_folds=n_splits,
+                minimum_folds=adaptability_min_folds,
+            )
+        )
+    adaptability_df = pd.DataFrame(adaptability_rows)
+    write_csv_text_with_provenance(
+        adaptability_path,
+        adaptability_df.to_csv(index=False),
+        source=f"fold_report={fold_report_path}",
+        config_summary=(
+            f"primary_model={primary_model}, inference=descriptive_temporal_consistency, "
+            f"significance_tested=false, required_folds={adaptability_min_folds}, "
+            f"minimum_support={required_support}"
+        ),
+    )
     metrics = [
         "pr_auc", "roc_auc", "precision", "recall", "f1", "accuracy",
         "false_alarm_rate",
@@ -948,3 +1519,64 @@ def time_series_cv_report(
     report = pd.DataFrame(agg_rows)
     write_csv_text_with_provenance(report_path, report.to_csv(index=False), source, config_summary)
     return report
+
+
+def temporal_consistency_summary(
+    model_name: str,
+    pr_auc_deltas: Sequence[float],
+    *,
+    primary_model: str | None,
+    requested_folds: int,
+    minimum_folds: int,
+) -> dict[str, object]:
+    """Summarize non-inferential performance consistency across time blocks.
+
+    Expanding time folds share pairs and overlapping training data, so they are
+    not independent units for a sign-flip significance test.  This helper
+    deliberately reports only the pre-registered descriptive rule: every
+    requested future fold must be valid and have a positive PR-AUC delta.
+    """
+    deltas = np.asarray(pr_auc_deltas, dtype=float)
+    if requested_folds <= 0 or minimum_folds <= 0:
+        raise ValueError("requested_folds and minimum_folds must be positive")
+    if not np.all(np.isfinite(deltas)):
+        raise ValueError("pr_auc_deltas must be finite")
+    primary = bool(primary_model is not None and model_name == primary_model)
+    all_requested_folds_valid = len(deltas) == requested_folds
+    supported = bool(
+        primary
+        and requested_folds >= minimum_folds
+        and all_requested_folds_valid
+        and len(deltas)
+        and float(deltas.min()) > 0
+    )
+    return {
+        "model": model_name,
+        "primary_model": primary,
+        "valid_paired_folds": int(len(deltas)),
+        "mean_pr_auc_delta": float(deltas.mean()) if len(deltas) else None,
+        "median_pr_auc_delta": float(np.median(deltas)) if len(deltas) else None,
+        "worst_fold_pr_auc_delta": float(deltas.min()) if len(deltas) else None,
+        "positive_delta_folds": int((deltas > 0).sum()),
+        "positive_delta_fraction": float((deltas > 0).mean()) if len(deltas) else None,
+        "required_folds": minimum_folds,
+        "requested_folds": requested_folds,
+        "all_requested_folds_valid": all_requested_folds_valid,
+        "inference_method": (
+            "pre-registered descriptive temporal-block consistency; "
+            "no independence-based significance test"
+        ),
+        "statistical_significance_tested": False,
+        "adaptability_supported": supported,
+        "claim": (
+            "descriptive temporal consistency supported: primary PR-AUC exceeded "
+            "the distance baseline in every requested future fold; this is not a "
+            "statistical-significance claim"
+            if supported
+            else (
+                "exploratory supporting model; not eligible for adaptability claim"
+                if not primary
+                else "descriptive temporal consistency not supported"
+            )
+        ),
+    }
