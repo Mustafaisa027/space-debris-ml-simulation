@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "generated_utc": "2026-07-21T17:57:11.532714Z",
+  "git_commit": "1d7e2720eb584ebd2ce43de8c9a77cc54378fbc3",
+  "github_run_id": "29854446614",
+  "github_run_attempt": "1",
+  "file_count": 5,
+  "total_bytes": 325632,
+  "files": [
+    {
+      "path": "history/conjunction_observations_iac26_75_v1.csv",
+      "bytes": 91147,
+      "sha256": "f8077ce8e119bfa3163eaea3c31d520d3f8d7e9d7b7d43f674a96f5d753c85fc"
+    },
+    {
+      "path": "runs/20260721_174806/conjunction_dataset.csv",
+      "bytes": 167591,
+      "sha256": "8af509f78d1677436dc65e4b8a1715a04aaf6d5a61b3d9ab209a931c618b5b18"
+    },
+    {
+      "path": "runs/20260721_174806/identified_conjunctions.csv",
+      "bytes": 53210,
+      "sha256": "47bdb72d0facfaa2500e788324ed779e349611f0d468874e179f71367f857b67"
+    },
+    {
+      "path": "tle/tles_20260721_174806.json",
+      "bytes": 2179,
+      "sha256": "ddb4809b44e3c0e8a76ae18c38958bf5496e500c9aea1cd486e70e6ea87ccf4c"
+    },
+    {
+      "path": "tle/tles_20260721_174806.txt",
+      "bytes": 11505,
+      "sha256": "69d3a576fc99e80698dbce4249b959327975aaabdb938855f2c19c2c5b0634b6"
+    }
+  ]
+}
