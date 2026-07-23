@@ -64,3 +64,36 @@ def test_abstract_result_language_remains_fail_closed():
         contract["interpretation_limits"]["probability_of_collision_claim"]
         is False
     )
+
+
+def test_operator_documentation_matches_active_v2_contract():
+    collection_guide = Path("docs/GITHUB_DATA_COLLECTION.md").read_text(
+        encoding="utf-8"
+    )
+    plotting_guide = Path("docs/plotting_blueprint.md").read_text(encoding="utf-8")
+    readme = Path("README.md").read_text(encoding="utf-8")
+
+    for required_text in (
+        "minutes `17` and `47` of every UTC hour",
+        "manifest schema 3",
+        "config/experiment_10_days_v2.json",
+        "2026-07-24T00:17:00Z",
+        "108 of 120 slots",
+        "at least 30% unique TLE hashes",
+        "more than six consecutive bins",
+    ):
+        assert required_text in collection_guide
+
+    for stale_active_instruction in (
+        "minute 17 of every second UTC hour",
+        "every newly generated authoritative bundle uses manifest schema 2",
+        "python src/import_collection_archive.py ..\\space-debris-data\n",
+        "python src/resimulate_snapshots.py --config config/experiment_60_days.json",
+        "the frozen interval into half-open two-hour bins anchored at `16:17Z`",
+    ):
+        assert stale_active_instruction not in collection_guide
+
+    assert "`iac26-10d-v2` accumulated history" in plotting_guide
+    assert "Final IAC figures should use the 60-day history" not in plotting_guide
+    assert "active 10-day frozen-cohort protocol" in readme
+    assert "60-day frozen-cohort protocol below" not in readme

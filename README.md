@@ -93,10 +93,10 @@ km), not the earlier 3000-10000 km placeholders. If any TLE epoch is older than
 warning and the geometry should be treated as illustrative only.
 
 These commands run with `--feature-set snapshot_only` by default — the
-predictive-power comparison described above. They do **not** reproduce the
-60-day frozen-cohort protocol below (single snapshot, no chronological
-train/test split); use them to exercise the pipeline against live data, not to
-reproduce the paper's headline result.
+predictive-power comparison described above. A single ad hoc run does **not**
+reproduce the active 10-day frozen-cohort protocol or its chronological
+train/test split; use these commands to exercise the pipeline against live
+data, not to reproduce the paper's headline result.
 
 ## Active claim-eligible experiment (10-day v2)
 

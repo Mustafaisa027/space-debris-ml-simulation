@@ -6,9 +6,12 @@
 > `collections/` tree is the isolated v1 pilot archive and is never imported
 > into v2. See `docs/EXPERIMENT_10D_V2.md` for the frozen scientific contract.
 
-`.github/workflows/collect_observations.yml` runs one CelesTrak collection at
-minute 17 of every second UTC hour. It stores the results on the repository's
-separate `data-collection` branch, so generated observations do not clutter the
+`.github/workflows/collect_observations.yml` offers delivery opportunities at
+minutes `17` and `47` of every UTC hour. An archive-backed slot guard permits
+at most one actual CelesTrak poll in each frozen two-hour scientific slot. The
+redundant triggers tolerate delayed GitHub cron delivery without changing
+sample weighting. Results are stored on the repository's separate
+`data-collection` branch, so generated observations do not clutter the
 source-code history on `main`.
 
 ## Archive layout
@@ -16,8 +19,9 @@ source-code history on `main`.
 Each workflow execution gets an immutable directory:
 
 ```text
-collections/github-run-RUN_ID-attempt-ATTEMPT/
-  history/conjunction_observations_iac26_75_v1.csv
+experiments/iac26-10d-v2/collections/github-run-RUN_ID-attempt-ATTEMPT/
+  experiment/config.json
+  history/conjunction_observations_iac26_75_v2.csv
   runs/TIMESTAMP/conjunction_dataset.csv
   runs/TIMESTAMP/identified_conjunctions.csv
   tle/tles_TIMESTAMP.txt
@@ -32,21 +36,18 @@ exact Python, platform and installed-package versions used by that numerical
 run. The workflow verifies that TLE, history, and simulation outputs exist
 before publishing anything.
 
-After these changes are merged to the default branch, every newly generated
-authoritative bundle uses manifest schema 2. Manifest generation fails closed
-unless a valid `environment/runtime.json` is present; it never downgrades a new
-bundle to schema 1. The three bundles present as of 2026-07-17 were created by
-source commit `1d7e272` before runtime capture was deployed, so their schema-1
-manifests remain importable for backward compatibility and are explicitly
-reported as `legacy_runtime_missing`. Schema 1 acceptance exists only in the
-importer as a backward-compatible path for pre-runtime bundles; it is not
-produced by the updated workflow.
+Every claim-eligible v2 bundle uses manifest schema 3. Manifest generation
+fails closed unless a valid `environment/runtime.json` and the exact embedded
+experiment config are present. The manifest binds the experiment ID, canonical
+config SHA-256, catalogue, simulation settings, source commit, runtime and
+every payload byte. Schema 1/2 acceptance exists only in the isolated v1
+compatibility path; the v2 workflow never produces or imports those schemas.
 
-Those first three bundles contain the same TLE text SHA-256. They occupy three
-different snapshot-time bins because their propagation windows differ, but
-they are not three independent orbital-element updates. The resimulation
-quality report therefore records both occupied bins and unique TLE-input hashes
-instead of treating raw snapshot count as information diversity.
+The retained first three v1 bundles contain the same TLE text SHA-256. They are
+pilot/audit artifacts, not three independent orbital-element updates and not
+members of the v2 cohort. The v2 scientific-progress report records both
+occupied bins and unique TLE-input hashes instead of treating raw snapshot
+count as information diversity.
 
 The first successful run creates `data-collection` automatically. Later runs
 append a new directory and never rewrite an earlier bundle. The workflow uses
@@ -60,8 +61,8 @@ Check out the generated branch into a separate worktree and run the importer:
 ```powershell
 git fetch origin data-collection
 git worktree add ..\space-debris-data origin/data-collection
-python src/import_collection_archive.py ..\space-debris-data
-python src/resimulate_snapshots.py --config config/experiment_60_days.json
+python src/import_collection_archive.py ..\space-debris-data --config config/experiment_10_days_v2.json
+python src/resimulate_snapshots.py --config config/experiment_10_days_v2.json --workers 4
 ```
 
 The importer first requires the archive path to be the root of a clean Git
@@ -69,7 +70,7 @@ checkout/worktree and records its exact HEAD revision. It then recomputes every
 manifest size/hash, rejects unlisted files, unsafe paths, partial/wrong
 catalogue cohorts and duplicate collection IDs, then atomically copies only
 TLE and per-run simulation artifacts into the flat canonical paths from
-`experiment_60_days.json`. Existing byte-identical files are an idempotent
+`experiment_10_days_v2.json`. Existing byte-identical files are an idempotent
 no-op; a same-name/different-content collision aborts before new files are
 copied. Per-bundle live history files are not concatenated: the publication
 history is rebuilt from corrected-TCA re-simulation. Before claim-eligible
@@ -77,23 +78,20 @@ training, every imported bundle is bound one-to-one to the resimulation report
 by `collection_id` and the verified TLE-file SHA-256; verify-only, unspecified
 revision, missing, extra, or hash-mismatched inputs stop the evidence pipeline.
 
-The final IAC experiment begins with catalogue cohort
-`iac26-leo-mixed-75-v1`. Older local 5/43-object snapshots remain an audit
-archive but are excluded from this 60-day cohort by the sidecar
-`catalog_version` and exact catalog-ID-set SHA-256; they must not be mixed into
-the final model history. The authoritative collector rejects partial coverage
-even though non-frozen exploratory fetches may use the general 90% availability
-floor.
+The claim-eligible catalogue is `iac26-leo-mixed-75-v2`. Older v1 and local
+5/43-object snapshots remain audit data and are excluded by experiment ID,
+manifest schema, catalogue version and exact sorted-ID SHA-256. They must not
+be mixed into the final model history. The authoritative collector requires
+the complete frozen 75-object cohort.
 
-The canonical half-open collection window is frozen in
-`config/experiment_60_days.json` as `2026-07-16T16:17:00Z` through
-`2026-09-14T16:17:00Z`, anchored to the pre-specified `17 */2 * * *` UTC cron
-grid. Scheduled invocations outside that window exit
+The canonical half-open window is frozen in
+`config/experiment_10_days_v2.json` as `2026-07-24T00:17:00Z` through
+`2026-08-03T00:17:00Z`. Scheduled invocations outside that window exit
 successfully without fetching or publishing data. Evaluation counts occupied
 two-hour cadence slots (so retries do not inflate coverage), requires at least
-90% of the 720 expected slots, rejects an actual snapshot-time gap above six
-hours (including start/end boundaries), requires at least 50% unique TLE hashes
-among occupied bins, and rejects more than 12 consecutive bins with one hash.
+108 of 120 slots, rejects an endpoint-inclusive actual snapshot-time gap above
+six hours, requires at least 30% unique TLE hashes among occupied bins and
+rejects more than six consecutive bins with one hash.
 
 ## Repository setting
 
@@ -123,7 +121,8 @@ Do not weaken protection on `main`.
 
 GitHub scheduled workflows can be delayed under load. Each bundle's recorded
 `snapshot_utc` is authoritative for the physical observation. Coverage divides
-the frozen interval into half-open two-hour bins anchored at `16:17Z`; a delayed
+the frozen interval into half-open two-hour bins anchored at the configured v2
+start, `2026-07-24T00:17:00Z`; a delayed
 run stays in the bin where the observation actually occurred, and retries in
 the same bin count only once. Public repositories can also
 have scheduled workflows disabled after 60 days without repository activity;
