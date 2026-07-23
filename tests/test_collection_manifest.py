@@ -102,8 +102,8 @@ def test_collection_workflow_creates_archive_parent_before_first_bundle():
     assert workflow.index("actions/setup-python@v5") < workflow.index(
         "Check frozen collection slot"
     )
-    assert 'cron: "17 */2 * * *"' in workflow
-    assert 'cron: "47 */2 * * *"' in workflow
+    assert 'cron: "17 * * * *"' in workflow
+    assert 'cron: "47 * * * *"' in workflow
     assert "src/collection_slot_guard.py archive-check" in workflow
     assert "experiments/iac26-10d-v2/collections" in workflow
     assert "'experiments/** -text'" in workflow
@@ -122,7 +122,7 @@ def test_cadence_workflow_checks_separate_data_archive():
     assert "path: archive" in workflow
     assert "src/collection_cadence_health.py ../archive" in workflow
     assert "config/experiment_10_days_v2.json" in workflow
-    assert 'cron: "07 1-23/2 * * *"' in workflow
+    assert 'cron: "07 * * * *"' in workflow
     assert "Verify recent schema-3 bundle" in workflow
 
 

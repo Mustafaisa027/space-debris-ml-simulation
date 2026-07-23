@@ -2,8 +2,8 @@ name: Check collection cadence health
 
 on:
   schedule:
-    # Run after both the :17 primary and :47 same-slot retry have had time to finish.
-    - cron: "07 1-23/2 * * *"
+    # Observe each hour after the most recent :47 collector opportunity.
+    - cron: "07 * * * *"
   workflow_dispatch: {}
 
 permissions:

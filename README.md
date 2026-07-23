@@ -226,8 +226,10 @@ This is an operational alert only; publication coverage continues to use
 snapshot timestamps and the frozen 120-slot definition below.
 
 The final collection interval is frozen in the experiment config and anchored
-to the pre-specified `17 */2 * * *` UTC cron grid, with a guarded `:47`
-same-slot retry. Coverage is measured over 120
+to its pre-specified `00:17Z` start. GitHub is asked to run at `:17` and `:47`
+every hour, providing four delivery opportunities inside each two-hour
+scientific slot. The archive-backed slot guard permits at most one actual
+CelesTrak poll per slot. Coverage is measured over 120
 half-open two-hour bins using each bundle's recorded `snapshot_utc`; retries
 cannot inflate it, at least 90% of slots must be present, the actual timestamp
 gap (including window endpoints) may not exceed six hours, at least 30% of

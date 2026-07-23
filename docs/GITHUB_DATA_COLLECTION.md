@@ -130,8 +130,8 @@ have scheduled workflows disabled after 60 days without repository activity;
 check the Actions page periodically.
 
 The separate **Check collection cadence health** workflow checks out both the
-default branch and `data-collection` every two hours at `07` minutes past odd
-UTC hours, after both the primary and same-slot retry have had time to finish.
+default branch and `data-collection` every hour at `07` minutes past the hour,
+after the most recent `:47` collector opportunity.
 During the active window, it fails when the newest schema-3 manifest is more
 than the configured
 `max_snapshot_gap_hours` old. This failure is an early operational alert; it
