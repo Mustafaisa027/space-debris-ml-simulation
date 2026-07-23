@@ -126,6 +126,16 @@ def test_cadence_workflow_checks_separate_data_archive():
     assert "Verify recent schema-3 bundle" in workflow
 
 
+def test_archive_verifier_import_does_not_require_training_dependencies():
+    tle_validation = Path("src/space_debris/tle_validation.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "if TYPE_CHECKING:" in tle_validation
+    assert "\nimport pandas as pd\n" not in tle_validation
+    assert "    import pandas as pd\n" in tle_validation
+
+
 def test_finalizer_is_window_locked_and_orders_the_evidence_chain():
     script = Path("scripts/finalize_iac_experiment.ps1").read_text(encoding="utf-8")
     window_check = 'src\\collection_window_status.py'

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Sequence
+from typing import TYPE_CHECKING, Sequence
 
-import pandas as pd
+if TYPE_CHECKING:
+    import pandas as pd
 
 
 def tle_checksum_is_valid(line: str) -> bool:
@@ -51,7 +52,7 @@ def validated_tle_catalog_ids(path: Path) -> list[str]:
 
 
 def partition_tle_hash_quality(
-    frame: pd.DataFrame,
+    frame: "pd.DataFrame",
     snapshot_records: Sequence[dict[str, object]],
     error_cls: type[Exception] = ValueError,
 ) -> dict[str, object]:
@@ -62,6 +63,8 @@ def partition_tle_hash_quality(
     exception type they raised on malformed input) -- ``error_cls`` lets each
     caller keep raising its own domain-specific error.
     """
+    import pandas as pd
+
     if "collection_id" not in frame.columns:
         raise error_cls("Partition TLE quality requires collection_id")
     by_collection: dict[str, tuple[pd.Timestamp, str]] = {}
