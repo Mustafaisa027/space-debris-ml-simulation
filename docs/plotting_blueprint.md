@@ -25,8 +25,9 @@ observable or derived orbital quantities:
 
 6. Model metrics only after enough samples exist.
    For small smoke-test datasets, model plots must be marked preliminary or
-   suppressed. Final IAC figures should use the 60-day history and time-based
-   splits.
+   suppressed. Final IAC figures should use the verified, corrected-TCA
+   `iac26-10d-v2` accumulated history and its pre-registered pair-held-out,
+   chronological split.
 
 Avoid:
 
