@@ -2,9 +2,10 @@ name: Collect TLE observations
 
 on:
   schedule:
-    # Primary plus one same-slot retry. The slot guard prevents duplicate polling.
-    - cron: "17 */2 * * *"
-    - cron: "47 */2 * * *"
+    # Four attempts per two-hour scientific slot tolerate delayed GitHub cron
+    # delivery. The archive-backed slot guard permits at most one actual poll.
+    - cron: "17 * * * *"
+    - cron: "47 * * * *"
   workflow_dispatch: {}
 
 permissions:

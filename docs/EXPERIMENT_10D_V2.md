@@ -21,8 +21,13 @@ as confirmatory evidence.
   `iac26-leo-mixed-75-v2`; exact sorted-ID SHA-256 is required.
 - Source: CelesTrak CATNR requests, with credentialed Space-Track fallback
   when secrets are available. Partial catalogue responses fail closed.
-- Cadence: primary `17 */2 * * *` UTC and one `47 */2 * * *` retry. A
-  deterministic slot guard makes a completed retry a no-op.
+- Cadence: GitHub delivery attempts at `:17` and `:47` every UTC hour, giving
+  four opportunities inside each frozen two-hour scientific slot. A
+  deterministic archive-backed slot guard makes every attempt after the first
+  successful poll in that slot a no-op. This operational redundancy was
+  frozen before collection after preflight runs showed GitHub cron delivery
+  delays exceeding 60 minutes; it does not change slot assignment or sample
+  weighting.
 - Archive: schema-3 immutable bundles under
   `experiments/iac26-10d-v2/collections/`.
 - Binding: each bundle records and verifies the experiment ID, canonical
