@@ -130,8 +130,10 @@ have scheduled workflows disabled after 60 days without repository activity;
 check the Actions page periodically.
 
 The separate **Check collection cadence health** workflow checks out both the
-default branch and `data-collection` every two hours. During the active window,
-it fails when the newest schema-2 manifest is more than the configured
+default branch and `data-collection` every two hours at `07` minutes past odd
+UTC hours, after both the primary and same-slot retry have had time to finish.
+During the active window, it fails when the newest schema-3 manifest is more
+than the configured
 `max_snapshot_gap_hours` old. This failure is an early operational alert; it
 does not substitute manifest time for `snapshot_utc` in the scientific
 coverage calculation.
@@ -146,7 +148,11 @@ After the window closes, use the resumable finalizer from the source checkout:
 
 It refuses pre-window finalization, imports only a clean committed archive,
 re-simulates immutable snapshots in parallel, and then runs the fail-closed
-training/publication entry point.
+training/publication entry point. A checkpoint journal under `outputs/history`
+binds completed import and resimulation stages to the exact config SHA-256,
+archive commit and complete manifest set. A later invocation reuses a stage
+only while every recorded output hash/tree hash still matches. A changed
+archive or config is rejected instead of silently resuming stale work.
 
 ## Existing local archive
 

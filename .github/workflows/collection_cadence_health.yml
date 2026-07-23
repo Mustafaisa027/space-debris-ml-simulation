@@ -2,7 +2,8 @@ name: Check collection cadence health
 
 on:
   schedule:
-    - cron: "47 */2 * * *"
+    # Run after both the :17 primary and :47 same-slot retry have had time to finish.
+    - cron: "07 1-23/2 * * *"
   workflow_dispatch: {}
 
 permissions:
@@ -29,6 +30,6 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Verify recent schema-2 bundle
+      - name: Verify recent schema-3 bundle
         working-directory: source
         run: python src/collection_cadence_health.py ../archive --config config/experiment_10_days_v2.json
