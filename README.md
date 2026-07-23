@@ -98,7 +98,16 @@ predictive-power comparison described above. They do **not** reproduce the
 train/test split); use them to exercise the pipeline against live data, not to
 reproduce the paper's headline result.
 
-## Building a proper dataset (60-day collection)
+## Active claim-eligible experiment (10-day v2)
+
+The active frozen protocol is `iac26-10d-v2`, running from
+2026-07-24T00:17:00Z through 2026-08-03T00:17:00Z. It contains 120 half-open
+two-hour slots, requires 90% coverage, and stores schema-3 bundles under
+`experiments/iac26-10d-v2/collections/`. Exact experiment/config/catalogue and
+simulation bindings are verified before import. The earlier 60-day v1 archive
+is pilot evidence only: its hardened eligible-bundle ceiling makes its frozen
+90% gate unattainable, so v1 is never pooled into v2 or used for a publication
+claim. See [`docs/EXPERIMENT_10D_V2.md`](docs/EXPERIMENT_10D_V2.md).
 
 A single snapshot yields very few conjunctions, so no classifier can reliably
 beat the fixed-distance baseline on it — that is a statistical fact, not a code
@@ -110,17 +119,17 @@ collector enforces this as a floor.
 # one cycle
 python src/collect_observations.py --once
 
-# 60-day background collection (see scripts/ for Windows Task Scheduler helpers)
-python src/collect_observations.py --days 60 --interval-hours 2
+# one active-v2 cycle (normally GitHub Actions performs this)
+python src/collect_observations.py --once --config config/experiment_10_days_v2.json
 
 # verify/import the GitHub archive, then rebuild corrected-TCA history
 git fetch origin data-collection
 git worktree add ../space-debris-data origin/data-collection
-python src/import_collection_archive.py ../space-debris-data
-python src/resimulate_snapshots.py --config config/experiment_60_days.json --workers 4
+python src/import_collection_archive.py ../space-debris-data --config config/experiment_10_days_v2.json
+python src/resimulate_snapshots.py --config config/experiment_10_days_v2.json --workers 4
 
 # pair-held-out, time-ordered evaluation over corrected-TCA history
-python src/train_from_history.py
+python src/train_from_history.py --config config/experiment_10_days_v2.json
 ```
 
 After the frozen window closes, the same fail-closed sequence is available as
@@ -135,8 +144,8 @@ committed archive through the importer, reuses fingerprint-verified completed
 resimulations, and produces no publication claim unless every downstream
 quality and evidence gate passes.
 
-The training command defaults to the corrected frozen-cohort
-`conjunction_observations_resimulated_iac26_75_v1.csv`, not the live collector
+The active training command uses the corrected frozen-cohort
+`conjunction_observations_resimulated_iac26_75_v2.csv`, not the live collector
 history or the older mixed 5/43/75-object archive. The claim-eligible primary
 experiment is pre-specified XGBoost using only six quantities available at the
 observation snapshot: current distance, altitude difference, maximum TLE age,
@@ -211,23 +220,26 @@ a scheduled GitHub Actions workflow that commits immutable, hash-manifested
 bundles to a separate `data-collection` branch. Setup instructions are in
 [`docs/GITHUB_DATA_COLLECTION.md`](docs/GITHUB_DATA_COLLECTION.md).
 
-The companion cadence-health workflow checks the age of the newest schema-2
+The companion cadence-health workflow verifies the newest schema-3
 bundle manifest every two hours and fails after the frozen six-hour gap limit.
 This is an operational alert only; publication coverage continues to use
-snapshot timestamps and the frozen 720-slot definition below.
+snapshot timestamps and the frozen 120-slot definition below.
 
 The final collection interval is frozen in the experiment config and anchored
-to the pre-specified `17 */2 * * *` UTC cron grid. Coverage is measured over 720
+to the pre-specified `17 */2 * * *` UTC cron grid, with a guarded `:47`
+same-slot retry. Coverage is measured over 120
 half-open two-hour bins using each bundle's recorded `snapshot_utc`; retries
 cannot inflate it, at least 90% of slots must be present, the actual timestamp
-gap (including window endpoints) may not exceed six hours, at least 50% of
+gap (including window endpoints) may not exceed six hours, at least 30% of
 occupied bins must have distinct TLE hashes, and an identical-hash run may not
-exceed 12 bins.
+exceed six bins. The diversity threshold was frozen from the v1 pilot before
+v2 collection and is not outcome-tuned.
 
-`config/experiment_60_days.json` is the authoritative source for collection,
-simulation thresholds, the `iac26-leo-mixed-75-v1` cohort, and report paths.
+`config/experiment_10_days_v2.json` is authoritative for active collection,
+simulation thresholds, the `iac26-leo-mixed-75-v2` cohort, and report paths.
+`experiment_60_days.json` remains immutable for v1 audit replay.
 Exploratory tools may accept alternate configs, but the claim-eligible
-`train_from_history.py` entry point rejects every other config path. Changing
+`train_from_history.py` rejects every unregistered config path. Changing
 the frozen protocol requires a new versioned experiment and collection window;
 it cannot be overridden after outcomes are observed.
 for explicit one-off experiments, and those values are recorded in provenance.
@@ -236,9 +248,9 @@ GitHub runs scheduled workflows only from the repository's default branch.
 Therefore `.github/workflows/collect_observations.yml` must be merged into
 `main` before the two-hour collector can start automatically. After merging,
 enable Actions if necessary, trigger one manual smoke run, and verify that the
-`data-collection` branch receives a new immutable `collections/github-run-*`
-bundle. Keeping the workflow only on a feature branch does not start the
-60-day experiment.
+`data-collection` branch receives a new immutable
+`experiments/iac26-10d-v2/collections/github-run-*` bundle. Keeping the
+workflow only on a feature branch does not start the experiment.
 
 `train_from_history.py` assigns canonical object pairs deterministically with
 SHA-256, then trains only on train-pair observations before a complete snapshot

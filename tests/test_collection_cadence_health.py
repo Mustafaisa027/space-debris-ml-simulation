@@ -48,7 +48,7 @@ def test_cadence_health_uses_latest_schema_two_manifest(tmp_path):
     assert report["schema_2_bundle_count"] == 1
 
 
-def test_cadence_health_ignores_legacy_manifests_and_closes_after_window(tmp_path):
+def test_cadence_health_ignores_legacy_manifests_and_fails_stale_after_window(tmp_path):
     config = _config()
     end = datetime.fromisoformat(config.collection_end_utc.replace("Z", "+00:00"))
     bundle = tmp_path / "collections" / "github-run-42-attempt-1"
@@ -59,7 +59,19 @@ def test_cadence_health_ignores_legacy_manifests_and_closes_after_window(tmp_pat
     )
 
     assert verified_bundle_times(tmp_path) == []
-    assert cadence_health(config, [], end)["status"] == "window_complete"
+    report = cadence_health(config, [], end)
+    assert report["status"] == "window_complete_stale"
+    assert report["healthy"] is False
+
+
+def test_cadence_health_closes_healthy_with_recent_final_bundle():
+    config = _config()
+    end = datetime.fromisoformat(config.collection_end_utc.replace("Z", "+00:00"))
+
+    report = cadence_health(config, [end - timedelta(hours=2)], end)
+
+    assert report["status"] == "window_complete"
+    assert report["healthy"] is True
 
 
 def test_cadence_health_rejects_naive_now():

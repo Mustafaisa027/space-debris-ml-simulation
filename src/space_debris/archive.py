@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Iterable
 
@@ -105,6 +106,7 @@ class VerifiedBundle:
     source_git_commit: str
     runtime_provenance_status: str
     manifest_schema_version: int
+    snapshot_utc: datetime
     files: tuple[VerifiedFile, ...]
 
 
@@ -150,7 +152,8 @@ def _verify_sidecar(
     collection_id: str,
     config: ExperimentConfig,
     source_commit: str,
-) -> None:
+    schema_version: int,
+) -> dict:
     sidecar = _load_json(sidecar_path, "TLE provenance sidecar")
     ids = sidecar.get("catalog_ids")
     if not isinstance(ids, list):
@@ -169,6 +172,13 @@ def _verify_sidecar(
         "requested_object_count": config.max_objects,
         "preset": config.preset,
     }
+    if schema_version == 3:
+        expected.update(
+            {
+                "experiment_id": config.experiment_id,
+                "experiment_config_sha256": config.config_sha256,
+            }
+        )
     mismatches = {
         key: {"expected": value, "observed": sidecar.get(key)}
         for key, value in expected.items()
@@ -179,6 +189,24 @@ def _verify_sidecar(
             "expected": config.catalog_sha256,
             "observed": observed_hash,
         }
+    if schema_version == 3:
+        expected_simulation = {
+            "horizon_minutes": config.horizon_minutes,
+            "step_minutes": config.step_minutes,
+            "screening_step_seconds": config.screening_step_seconds,
+            "candidate_threshold_km": config.candidate_threshold_km,
+            "fixed_threshold_km": config.fixed_threshold_km,
+            "label_threshold_km": config.label_threshold_km,
+            "label_relative_velocity_km_s": config.label_relative_velocity_km_s,
+            "max_tle_age_hours": config.max_tle_age_hours,
+            "leo_min_altitude_km": config.leo_min_altitude_km,
+            "leo_max_altitude_km": config.leo_max_altitude_km,
+        }
+        if sidecar.get("simulation") != expected_simulation:
+            mismatches["simulation"] = {
+                "expected": expected_simulation,
+                "observed": sidecar.get("simulation"),
+            }
     sidecar_commit = str(sidecar.get("git_commit", "")).strip().lower()
     if (
         not re.fullmatch(r"[0-9a-f]{7,40}", sidecar_commit)
@@ -192,6 +220,7 @@ def _verify_sidecar(
         raise ArchiveVerificationError(
             f"Frozen cohort mismatch in {sidecar_path}: {json.dumps(mismatches, sort_keys=True)}"
         )
+    return sidecar
 
 
 def verify_collection_bundle(bundle_root: Path, config: ExperimentConfig) -> VerifiedBundle:
@@ -203,7 +232,7 @@ def verify_collection_bundle(bundle_root: Path, config: ExperimentConfig) -> Ver
     manifest_path = bundle_root / "manifest.json"
     manifest = _load_json(manifest_path, "collection manifest")
     schema_version = manifest.get("schema_version")
-    if schema_version not in {1, 2}:
+    if schema_version not in {1, 2, 3}:
         raise ArchiveVerificationError(f"Unsupported manifest schema in {manifest_path}")
     if str(manifest.get("github_run_id", "")) != match.group("run_id"):
         raise ArchiveVerificationError(f"Bundle/run ID mismatch in {manifest_path}")
@@ -261,10 +290,10 @@ def verify_collection_bundle(bundle_root: Path, config: ExperimentConfig) -> Ver
 
     by_path = {item.relative_path: item for item in verified}
     runtime_path = "environment/runtime.json"
-    if schema_version == 2:
+    if schema_version in {2, 3}:
         if runtime_path not in by_path:
             raise ArchiveVerificationError(
-                f"Manifest schema 2 requires {runtime_path}: {manifest_path}"
+                f"Manifest schema {schema_version} requires {runtime_path}: {manifest_path}"
             )
         runtime = _load_json(by_path[runtime_path].source, "runtime environment")
         if (
@@ -279,6 +308,27 @@ def verify_collection_bundle(bundle_root: Path, config: ExperimentConfig) -> Ver
         runtime_status = "verified"
     else:
         runtime_status = "verified_legacy" if runtime_path in by_path else "legacy_runtime_missing"
+    if schema_version == 3:
+        embedded_path = "experiment/config.json"
+        if (
+            manifest.get("experiment_id") != config.experiment_id
+            or manifest.get("experiment_config_path") != embedded_path
+            or manifest.get("experiment_config_sha256") != config.config_sha256
+            or embedded_path not in by_path
+        ):
+            raise ArchiveVerificationError(
+                f"Schema-3 experiment binding mismatch in {manifest_path}"
+            )
+        embedded = _load_json(by_path[embedded_path].source, "embedded experiment config")
+        canonical = hashlib.sha256(
+            json.dumps(
+                embedded, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+            ).encode("utf-8")
+        ).hexdigest()
+        if canonical != config.config_sha256:
+            raise ArchiveVerificationError(
+                f"Embedded experiment config digest mismatch in {manifest_path}"
+            )
     expected_history = f"history/{Path(config.history).name}"
     tle_texts = sorted(path for path in by_path if re.fullmatch(r"tle/tles_[0-9]{8}_[0-9]{6}\.txt", path))
     tle_sidecars = sorted(path for path in by_path if re.fullmatch(r"tle/tles_[0-9]{8}_[0-9]{6}\.json", path))
@@ -310,9 +360,21 @@ def verify_collection_bundle(bundle_root: Path, config: ExperimentConfig) -> Ver
     source_commit = str(manifest.get("git_commit", "")).strip()
     if not re.fullmatch(r"[0-9a-f]{40}", source_commit):
         raise ArchiveVerificationError(f"Manifest git_commit must be a full SHA-1: {manifest_path}")
-    _verify_sidecar(
-        by_path[tle_sidecars[0]].source, collection_id, config, source_commit
+    sidecar = _verify_sidecar(
+        by_path[tle_sidecars[0]].source,
+        collection_id,
+        config,
+        source_commit,
+        schema_version,
     )
+    try:
+        snapshot_utc = datetime.fromisoformat(
+            str(sidecar["fetched_utc"]).replace("Z", "+00:00")
+        ).astimezone(timezone.utc)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ArchiveVerificationError(
+            f"Invalid fetched_utc in {by_path[tle_sidecars[0]].source}"
+        ) from exc
     try:
         actual_catalog_ids = validated_tle_catalog_ids(by_path[tle_texts[0]].source)
     except (OSError, UnicodeError, ValueError) as exc:
@@ -336,6 +398,7 @@ def verify_collection_bundle(bundle_root: Path, config: ExperimentConfig) -> Ver
         source_git_commit=source_commit,
         runtime_provenance_status=runtime_status,
         manifest_schema_version=schema_version,
+        snapshot_utc=snapshot_utc,
         files=tuple(verified),
     )
 
@@ -397,7 +460,7 @@ def import_collection_archive(
             expected_revision=archive_revision,
         )
         archive_revision = verified_revision
-    collections_root = archive_root / "collections"
+    collections_root = archive_root / config.archive_collections
     bundle_paths = sorted(collections_root.glob("github-run-*-attempt-*"))
     if not bundle_paths:
         raise ArchiveVerificationError(f"No GitHub collection bundles below {collections_root}")
@@ -438,12 +501,33 @@ def import_collection_archive(
                 ) from exc
     operations: dict[Path, tuple[VerifiedFile, str]] = {}
     collection_owners: dict[str, str] = {}
+    slot_owners: dict[int, str] = {}
     for bundle in bundles:
         previous_owner = collection_owners.setdefault(bundle.collection_id, bundle.name)
         if previous_owner != bundle.name:
             raise ArchiveVerificationError(
                 f"Duplicate collection_id={bundle.collection_id} in {previous_owner} and {bundle.name}"
             )
+        if config.collection_start_utc is not None and bundle.manifest_schema_version == 3:
+            start = datetime.fromisoformat(
+                config.collection_start_utc.replace("Z", "+00:00")
+            ).astimezone(timezone.utc)
+            end = datetime.fromisoformat(
+                config.collection_end_utc.replace("Z", "+00:00")
+            ).astimezone(timezone.utc)
+            if not start <= bundle.snapshot_utc < end:
+                raise ArchiveVerificationError(
+                    f"Bundle is outside the frozen collection window: {bundle.name}"
+                )
+            slot = int(
+                (bundle.snapshot_utc - start).total_seconds()
+                // (config.poll_interval_hours * 3600.0)
+            )
+            previous_slot_owner = slot_owners.setdefault(slot, bundle.name)
+            if previous_slot_owner != bundle.name:
+                raise ArchiveVerificationError(
+                    f"Duplicate frozen slot={slot} in {previous_slot_owner} and {bundle.name}"
+                )
         for item in bundle.files:
             destination = _destination_for(item, Path(snapshot_dir), Path(run_root))
             if destination is None:
@@ -516,6 +600,7 @@ def import_collection_archive(
                 "source_git_commit": bundle.source_git_commit,
                 "runtime_provenance_status": bundle.runtime_provenance_status,
                 "manifest_schema_version": bundle.manifest_schema_version,
+                "snapshot_utc": bundle.snapshot_utc.isoformat().replace("+00:00", "Z"),
             }
         )
     manifest_set_sha256 = hashlib.sha256(

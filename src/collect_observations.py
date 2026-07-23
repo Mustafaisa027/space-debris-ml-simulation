@@ -48,6 +48,10 @@ def parse_args() -> argparse.Namespace:
         help="curated multi-orbit CATNR catalog used when --catnr/--group are not given",
     )
     parser.set_defaults(catalog_sha256=config.catalog_sha256)
+    parser.set_defaults(
+        experiment_id=config.experiment_id,
+        experiment_config_sha256=config.config_sha256,
+    )
     parser.add_argument("--max-objects", type=int, default=config.max_objects, help="cap objects to control O(n^2) pair growth")
     parser.add_argument(
         "--catalog-version",
@@ -266,6 +270,8 @@ def collect_once(args: argparse.Namespace) -> int:
         "catalog_ids": fetch_report.get("catalog_ids", []),
         "requested_object_count": fetch_report.get("requested_count", len(catnrs)),
         "experiment_config": getattr(args, "config", ""),
+        "experiment_id": getattr(args, "experiment_id", ""),
+        "experiment_config_sha256": getattr(args, "experiment_config_sha256", ""),
         "simulation": {
             "horizon_minutes": args.horizon_minutes,
             "step_minutes": args.step_minutes,

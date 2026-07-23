@@ -6,6 +6,21 @@ in Low Earth Orbit."* This describes the data, label definition, modeling,
 and evaluation choices actually implemented in this repository, and states
 the limitations explicitly rather than leaving them implicit.
 
+## Active experiment version
+
+The claim-eligible acquisition protocol is `iac26-10d-v2`, frozen in
+`config/experiment_10_days_v2.json` for 2026-07-24T00:17:00Z through
+2026-08-03T00:17:00Z. Schema-3 bundles bind the experiment ID, canonical
+configuration hash, embedded configuration, catalogue hash, simulation
+parameters and runtime. They are isolated under
+`experiments/iac26-10d-v2/collections/`.
+
+References below to the 60-day `iac26-leo-mixed-75-v1` protocol document the
+preserved pilot/audit design. V1 cannot satisfy its frozen 90% gate under the
+hardened legacy-bundle policy and is not pooled into v2. The model, label,
+feature, split and fail-closed inference methods remain unchanged. The
+version-specific acquisition rationale is in `docs/EXPERIMENT_10D_V2.md`.
+
 ## 1. Data
 
 **Source.** Two-Line Element (TLE) sets are fetched by `src/fetch_tles.py`.

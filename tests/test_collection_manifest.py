@@ -71,6 +71,24 @@ def test_build_manifest_fails_closed_without_runtime_environment(tmp_path):
         build_manifest(tmp_path)
 
 
+def test_schema_three_manifest_binds_embedded_experiment_config(tmp_path):
+    _write_runtime(tmp_path)
+    source = Path("config/experiment_10_days_v2.json")
+    embedded = tmp_path / "experiment" / "config.json"
+    embedded.parent.mkdir()
+    embedded.write_bytes(source.read_bytes())
+
+    manifest = build_manifest(tmp_path, source)
+
+    assert manifest["schema_version"] == 3
+    assert manifest["experiment_id"] == "iac26-10d-v2"
+    assert manifest["experiment_config_path"] == "experiment/config.json"
+    assert len(manifest["experiment_config_sha256"]) == 64
+    assert "experiment/config.json" in {
+        item["path"] for item in manifest["files"]
+    }
+
+
 def test_collection_workflow_creates_archive_parent_before_first_bundle():
     workflow = Path(".github/workflows/collect_observations.yml").read_text(
         encoding="utf-8"
@@ -82,8 +100,13 @@ def test_collection_workflow_creates_archive_parent_before_first_bundle():
     assert immutable_destination in workflow
     assert workflow.index(parent_creation) < workflow.index(immutable_destination)
     assert workflow.index("actions/setup-python@v5") < workflow.index(
-        "Check frozen collection window"
+        "Check frozen collection slot"
     )
+    assert 'cron: "17 */2 * * *"' in workflow
+    assert 'cron: "47 */2 * * *"' in workflow
+    assert "src/collection_slot_guard.py archive-check" in workflow
+    assert "experiments/iac26-10d-v2/collections" in workflow
+    assert "'experiments/** -text'" in workflow
     assert (
         "github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'"
         in workflow
@@ -98,6 +121,7 @@ def test_cadence_workflow_checks_separate_data_archive():
     assert "ref: data-collection" in workflow
     assert "path: archive" in workflow
     assert "src/collection_cadence_health.py ../archive" in workflow
+    assert "config/experiment_10_days_v2.json" in workflow
 
 
 def test_finalizer_is_window_locked_and_orders_the_evidence_chain():
@@ -110,6 +134,7 @@ def test_finalizer_is_window_locked_and_orders_the_evidence_chain():
     assert '$window.status -ne "window_complete"' in script
     assert "--workers `$Workers" not in script
     assert "--workers $Workers" in script
+    assert "config\\experiment_10_days_v2.json" in script
     assert script.index(window_check) < script.index(archive_import)
     assert script.index(archive_import) < script.index(resimulation)
     assert script.index(resimulation) < script.index(training)

@@ -27,7 +27,11 @@ from space_debris.evidence import (
     generate_adaptability_inference,
     generate_evaluation_evidence,
 )
-from space_debris.experiment import DEFAULT_EXPERIMENT_CONFIG, load_experiment_config
+from space_debris.experiment import (
+    CLAIM_ELIGIBLE_EXPERIMENT_CONFIGS,
+    DEFAULT_EXPERIMENT_CONFIG,
+    load_experiment_config,
+)
 from space_debris.plots import create_publication_plots, plot_model_metrics
 from space_debris.archive import file_sha256
 from space_debris.provenance import (
@@ -837,13 +841,15 @@ def _validate_archive_resimulation_binding(
             or not re.fullmatch(r"[0-9a-f]{40}", source_commit)
             or runtime_status
             not in {"verified", "verified_legacy", "legacy_runtime_missing"}
-            or manifest_schema_version not in {1, 2}
+            or manifest_schema_version not in {1, 2, 3}
             or key in archive_inputs
         ):
             raise ValueError("Archive import report bundle provenance is invalid or duplicated")
         archive_inputs.add(key)
-        if manifest_schema_version == 2 and runtime_status != "verified":
-            raise ValueError("Schema-2 publication bundles require verified runtime provenance")
+        if manifest_schema_version in {2, 3} and runtime_status != "verified":
+            raise ValueError(
+                "Schema-2/3 publication bundles require verified runtime provenance"
+            )
         if manifest_schema_version == 1 and (
             bundle_name,
             collection_id,
@@ -969,9 +975,13 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    if Path(args.config).resolve() != Path(DEFAULT_EXPERIMENT_CONFIG).resolve():
+    canonical_paths = {
+        Path(DEFAULT_EXPERIMENT_CONFIG).resolve(),
+        *(Path(path).resolve() for path in CLAIM_ELIGIBLE_EXPERIMENT_CONFIGS),
+    }
+    if Path(args.config).resolve() not in canonical_paths:
         raise ValueError(
-            "Claim-eligible training requires config/experiment_60_days.json; "
+            "Claim-eligible training requires a registered versioned experiment config; "
             "a changed protocol requires a new versioned experiment entry point"
         )
     experiment = load_experiment_config(args.config)

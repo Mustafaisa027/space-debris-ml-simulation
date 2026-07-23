@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import math
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
 
 DEFAULT_EXPERIMENT_CONFIG = Path("config/experiment_60_days.json")
+ACTIVE_EXPERIMENT_CONFIG = Path("config/experiment_10_days_v2.json")
+CLAIM_ELIGIBLE_EXPERIMENT_CONFIGS = (
+    DEFAULT_EXPERIMENT_CONFIG,
+    ACTIVE_EXPERIMENT_CONFIG,
+)
 DEFAULT_QUALITY_GATE = {
     "min_train_positive_rows": 30,
     "min_test_positive_rows": 20,
@@ -75,6 +82,8 @@ def _optional_utc(value: object, field: str) -> str | None:
 @dataclass(frozen=True)
 class ExperimentConfig:
     path: Path
+    experiment_id: str
+    config_sha256: str
     duration_days: float
     poll_interval_hours: float
     provider: str
@@ -137,6 +146,7 @@ class ExperimentConfig:
     min_test_positive_pairs: int
     min_train_positive_snapshots: int
     min_test_positive_snapshots: int
+    archive_collections: str
     snapshot_dir: str
     run_root: str
     history: str
@@ -163,8 +173,19 @@ def load_experiment_config(path: str | Path = DEFAULT_EXPERIMENT_CONFIG) -> Expe
             **evaluation.get("quality_gate", {}),
         }
         outputs = raw["outputs"]
+        canonical_config = json.dumps(
+            raw, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode("utf-8")
         config = ExperimentConfig(
             path=config_path,
+            experiment_id=str(
+                raw.get("experiment_id")
+                or query.get(
+                    "catalog_version",
+                    f"{query['preset']}-legacy-unspecified",
+                )
+            ),
+            config_sha256=hashlib.sha256(canonical_config).hexdigest(),
             duration_days=float(raw["duration_days"]),
             poll_interval_hours=float(raw["poll_interval_hours"]),
             provider=str(raw.get("provider", "auto")),
@@ -318,6 +339,7 @@ def load_experiment_config(path: str | Path = DEFAULT_EXPERIMENT_CONFIG) -> Expe
             min_test_positive_snapshots=_positive_integer(
                 quality_gate["min_test_positive_snapshots"], "min_test_positive_snapshots"
             ),
+            archive_collections=str(outputs.get("archive_collections", "collections")),
             snapshot_dir=str(outputs["snapshots"]),
             run_root=str(outputs["runs"]),
             history=str(outputs["history"]),
@@ -384,8 +406,25 @@ def load_experiment_config(path: str | Path = DEFAULT_EXPERIMENT_CONFIG) -> Expe
         raise ValueError("adaptability block hours must be positive and embargo non-negative")
     if config.adaptability_embargo_hours >= config.adaptability_block_hours:
         raise ValueError("adaptability embargo must be shorter than each test block")
-    if not config.time_column or not config.pair_seed or not config.catalog_version:
+    if (
+        not config.time_column
+        or not config.pair_seed
+        or not config.catalog_version
+        or not config.experiment_id
+    ):
         raise ValueError("evaluation identity fields and catalog_version must be non-empty")
+    if not re.fullmatch(r"[a-z0-9][a-z0-9._-]*", config.experiment_id):
+        raise ValueError("experiment_id must be a safe lowercase versioned identifier")
+    archive_collections = Path(config.archive_collections)
+    if (
+        archive_collections.is_absolute()
+        or ".." in archive_collections.parts
+        or not archive_collections.parts
+        or archive_collections.name != "collections"
+    ):
+        raise ValueError(
+            "outputs.archive_collections must be a relative path ending in 'collections'"
+        )
     window_values = (
         config.collection_start_utc,
         config.collection_end_utc,

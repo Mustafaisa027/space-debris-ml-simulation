@@ -3,10 +3,12 @@ from __future__ import annotations
 import json
 import subprocess
 from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
+from fetch_tles import PRESETS
 from space_debris.archive import (
     ArchiveVerificationError,
     catalog_id_set_sha256,
@@ -65,7 +67,11 @@ def _write_bundle(
     collection_id: str = "20260101_000000",
     schema_version: int = 1,
 ) -> Path:
-    bundle = archive_root / "collections" / f"github-run-{run_id}-attempt-{attempt}"
+    bundle = (
+        archive_root
+        / config.archive_collections
+        / f"github-run-{run_id}-attempt-{attempt}"
+    )
     files = {
         f"history/{Path(config.history).name}": b"history\n",
         f"runs/{collection_id}/conjunction_dataset.csv": b"dataset\n",
@@ -81,11 +87,34 @@ def _write_bundle(
         "requested_object_count": config.max_objects,
         "preset": config.preset,
         "git_commit": "a" * 7,
+        "fetched_utc": datetime.strptime(
+            collection_id, "%Y%m%d_%H%M%S"
+        ).replace(tzinfo=timezone.utc).isoformat().replace("+00:00", "Z"),
     }
+    if schema_version == 3:
+        sidecar.update(
+            {
+                "experiment_id": config.experiment_id,
+                "experiment_config_sha256": config.config_sha256,
+                "simulation": {
+                    "horizon_minutes": config.horizon_minutes,
+                    "step_minutes": config.step_minutes,
+                    "screening_step_seconds": config.screening_step_seconds,
+                    "candidate_threshold_km": config.candidate_threshold_km,
+                    "fixed_threshold_km": config.fixed_threshold_km,
+                    "label_threshold_km": config.label_threshold_km,
+                    "label_relative_velocity_km_s": config.label_relative_velocity_km_s,
+                    "max_tle_age_hours": config.max_tle_age_hours,
+                    "leo_min_altitude_km": config.leo_min_altitude_km,
+                    "leo_max_altitude_km": config.leo_max_altitude_km,
+                },
+            }
+        )
+        files["experiment/config.json"] = config.path.read_bytes()
     files[f"tle/tles_{collection_id}.json"] = (
         json.dumps(sidecar, sort_keys=True) + "\n"
     ).encode("utf-8")
-    if schema_version == 2:
+    if schema_version in {2, 3}:
         runtime = {
             "schema_version": 1,
             "python": {"version": "3.12.0", "implementation": "CPython"},
@@ -117,6 +146,14 @@ def _write_bundle(
         "total_bytes": sum(entry["bytes"] for entry in entries),
         "files": entries,
     }
+    if schema_version == 3:
+        manifest.update(
+            {
+                "experiment_id": config.experiment_id,
+                "experiment_config_path": "experiment/config.json",
+                "experiment_config_sha256": config.config_sha256,
+            }
+        )
     (bundle / "manifest.json").write_text(
         json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
     )
@@ -297,6 +334,69 @@ def test_archive_schema_two_requires_runtime_environment(tmp_path):
 
     with pytest.raises(ArchiveVerificationError, match="requires environment/runtime.json"):
         verify_collection_bundle(bundle, config)
+
+
+def test_schema_three_binds_exact_experiment_and_simulation(tmp_path):
+    config = load_experiment_config("config/experiment_10_days_v2.json")
+    ids = list(PRESETS[config.preset])
+    bundle = _write_bundle(
+        tmp_path,
+        config,
+        ids,
+        collection_id="20260724_002200",
+        schema_version=3,
+    )
+
+    verified = verify_collection_bundle(bundle, config)
+    assert verified.manifest_schema_version == 3
+    assert verified.runtime_provenance_status == "verified"
+
+    changed = replace(config, fixed_threshold_km=26.0)
+    with pytest.raises(ArchiveVerificationError, match="simulation"):
+        verify_collection_bundle(bundle, changed)
+
+
+def test_v2_archive_scope_ignores_v1_root_collections(tmp_path):
+    v1, ids = _test_config(tmp_path)
+    _write_bundle(tmp_path, v1, ids)
+    v2 = load_experiment_config("config/experiment_10_days_v2.json")
+
+    with pytest.raises(ArchiveVerificationError, match="No GitHub collection bundles"):
+        import_collection_archive(
+            tmp_path,
+            tmp_path / "snapshots",
+            tmp_path / "runs",
+            v2,
+        )
+
+
+def test_schema_three_rejects_two_bundles_in_one_frozen_slot(tmp_path):
+    config = load_experiment_config("config/experiment_10_days_v2.json")
+    ids = list(PRESETS[config.preset])
+    _write_bundle(
+        tmp_path,
+        config,
+        ids,
+        run_id="42",
+        collection_id="20260724_002200",
+        schema_version=3,
+    )
+    _write_bundle(
+        tmp_path,
+        config,
+        ids,
+        run_id="43",
+        collection_id="20260724_004000",
+        schema_version=3,
+    )
+
+    with pytest.raises(ArchiveVerificationError, match="Duplicate frozen slot=0"):
+        import_collection_archive(
+            tmp_path,
+            tmp_path / "snapshots",
+            tmp_path / "runs",
+            config,
+        )
 
 
 def test_archive_schema_two_runtime_happy_path(tmp_path):

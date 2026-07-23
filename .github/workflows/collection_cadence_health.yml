@@ -31,4 +31,4 @@ jobs:
 
       - name: Verify recent schema-2 bundle
         working-directory: source
-        run: python src/collection_cadence_health.py ../archive --config config/experiment_60_days.json
+        run: python src/collection_cadence_health.py ../archive --config config/experiment_10_days_v2.json

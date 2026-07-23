@@ -1,5 +1,11 @@
 # GitHub Actions data collection
 
+> Active protocol: `iac26-10d-v2`, 2026-07-24T00:17:00Z through
+> 2026-08-03T00:17:00Z. Bundles use manifest schema 3 and are stored beneath
+> `experiments/iac26-10d-v2/collections/`. The older root-level
+> `collections/` tree is the isolated v1 pilot archive and is never imported
+> into v2. See `docs/EXPERIMENT_10D_V2.md` for the frozen scientific contract.
+
 `.github/workflows/collect_observations.yml` runs one CelesTrak collection at
 minute 17 of every second UTC hour. It stores the results on the repository's
 separate `data-collection` branch, so generated observations do not clutter the

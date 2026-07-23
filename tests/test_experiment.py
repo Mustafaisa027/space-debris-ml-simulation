@@ -244,6 +244,32 @@ def test_repository_experiment_config_is_valid():
     assert config.snapshot_dir.endswith("tle_snapshots_iac26_75_v1")
 
 
+def test_repository_v2_config_is_pre_registered_and_isolated():
+    config = load_experiment_config("config/experiment_10_days_v2.json")
+
+    assert config.duration_days == 10
+    assert config.collection_start_utc == "2026-07-24T00:17:00Z"
+    assert config.collection_end_utc == "2026-08-03T00:17:00Z"
+    assert config.catalog_version == "iac26-leo-mixed-75-v2"
+    assert config.archive_collections == "experiments/iac26-10d-v2/collections"
+    assert config.snapshot_dir.endswith("tle_snapshots_iac26_75_v2")
+    assert config.history.endswith("_iac26_75_v2.csv")
+    assert config.train_time_fraction == 0.40
+    assert config.adaptability_block_hours == 12
+    assert config.adaptability_min_blocks == 10
+    assert config.min_tle_hash_diversity_fraction == 0.30
+
+
+def test_experiment_config_rejects_unsafe_archive_collection_path(tmp_path):
+    raw = _config()
+    raw["outputs"]["archive_collections"] = "../collections"
+    path = tmp_path / "unsafe-archive.json"
+    path.write_text(json.dumps(raw), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="archive_collections"):
+        load_experiment_config(path)
+
+
 def test_command_defaults_are_loaded_from_the_same_experiment_config(monkeypatch):
     monkeypatch.setattr("sys.argv", ["collect_observations.py"])
     collect_args = collect_observations.parse_args()

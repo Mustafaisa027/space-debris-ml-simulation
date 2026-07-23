@@ -3,7 +3,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$ArchiveRoot,
 
-    [string]$Config = "config\experiment_60_days.json",
+    [string]$Config = "config\experiment_10_days_v2.json",
 
     [ValidateRange(1, 64)]
     [int]$Workers = 4,

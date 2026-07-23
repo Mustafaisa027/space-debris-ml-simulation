@@ -21,7 +21,10 @@ that its result claim is true.
 
 ## Current empirical gate
 
-The canonical experiment is 60 days at a two-hour collection cadence. A final
+The active canonical experiment is the pre-registered 10-day v2 protocol at a
+two-hour collection cadence. The earlier 60-day v1 archive is pilot/audit
+evidence and is not pooled because its hardened eligible-bundle ceiling makes
+its frozen 90% gate unattainable. A final
 model claim is permitted only after the corrected historical snapshots have
 been re-simulated and the strict pair-held-out future split contains both
 classes in train and test. Row count alone is not enough; positive events must
@@ -32,9 +35,9 @@ two-hour snapshot-time bins; at least 90% must be occupied and no gap may exceed
 six hours. The gap is measured from actual snapshot timestamps, including the
 window endpoints, rather than nominal bin indices. Publication evaluation also
 rejects retained rows beyond the frozen 14-day TLE-age bound, requires at least
-50% unique TLE hashes across occupied bins, and rejects identical-hash runs
-longer than 12 bins. Only the
-frozen `iac26-leo-mixed-75-v1` catalogue cohort is
+30% unique TLE hashes across occupied bins, and rejects identical-hash runs
+longer than six bins. Only the
+frozen `iac26-leo-mixed-75-v2` catalogue cohort is
 eligible; older mixed-size snapshots remain an audit archive.
 
 Until that gate passes, the abstract sentence saying that results show
@@ -72,7 +75,7 @@ the analysis to match the claim.
 
 ## Remaining work before submission
 
-1. Complete the 60-day immutable snapshot collection and corrected-TCA
+1. Complete the 10-day v2 immutable snapshot collection and corrected-TCA
    historical re-simulation.
 2. Import the GitHub archive through manifest/hash verification, re-simulate,
    and publish the generated frozen pair/time split manifest.
