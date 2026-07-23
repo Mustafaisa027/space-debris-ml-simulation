@@ -20,6 +20,11 @@ preserved pilot/audit design. V1 cannot satisfy its frozen 90% gate under the
 hardened legacy-bundle policy and is not pooled into v2. The model, label,
 feature, split and fail-closed inference methods remain unchanged. The
 version-specific acquisition rationale is in `docs/EXPERIMENT_10D_V2.md`.
+For adaptability inference, v2 additionally freezes a 40% outer training-time
+fraction, ten complete 12-hour future blocks separated by two-hour embargoes,
+one positive UTC day per eligible block, and bootstrap seed 214764. The
+48-hour/50%/114764 values described later belong only to the retained v1
+protocol.
 
 ## 1. Data
 
