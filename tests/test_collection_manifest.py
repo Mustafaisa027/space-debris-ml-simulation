@@ -122,6 +122,8 @@ def test_cadence_workflow_checks_separate_data_archive():
     assert "path: archive" in workflow
     assert "src/collection_cadence_health.py ../archive" in workflow
     assert "config/experiment_10_days_v2.json" in workflow
+    assert 'cron: "07 1-23/2 * * *"' in workflow
+    assert "Verify recent schema-3 bundle" in workflow
 
 
 def test_finalizer_is_window_locked_and_orders_the_evidence_chain():
@@ -135,6 +137,9 @@ def test_finalizer_is_window_locked_and_orders_the_evidence_chain():
     assert "--workers `$Workers" not in script
     assert "--workers $Workers" in script
     assert "config\\experiment_10_days_v2.json" in script
+    assert "src\\finalization_checkpoint.py" in script
+    assert "Test-CheckpointStage \"import\"" in script
+    assert "Test-CheckpointStage \"resimulation\"" in script
     assert script.index(window_check) < script.index(archive_import)
     assert script.index(archive_import) < script.index(resimulation)
     assert script.index(resimulation) < script.index(training)
