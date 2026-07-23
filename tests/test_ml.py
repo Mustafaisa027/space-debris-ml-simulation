@@ -18,8 +18,10 @@ from sklearn.metrics import average_precision_score, roc_auc_score
 from space_debris.ml import (
     FEATURES,
     FEATURES_WITHOUT_LABEL_RULE,
+    SNAPSHOT_ONLY_FEATURES,
     REPORT_COLUMNS,
     _build_models,
+    _apply_collection_window,
     _canonical_pair_ids,
     _pair_is_test,
     _pair_grouped_time_split,
@@ -27,6 +29,7 @@ from space_debris.ml import (
     compare_models,
     compare_to_baseline_pr_auc,
     model_predictions_for_plotting,
+    temporal_consistency_summary,
     time_series_cv_report,
 )
 
@@ -99,6 +102,198 @@ def test_ranking_metrics_handles_single_class_test_split():
     assert pr_auc is None
     assert roc_auc is None
     assert "single class" in note
+
+
+def test_collection_window_counts_unique_cadence_slots_not_retries():
+    df = pd.DataFrame(
+        {
+            "snapshot_utc": [
+                "2026-01-01T00:00:00Z",
+                "2026-01-01T00:10:00Z",  # same nominal two-hour slot
+                "2026-01-01T02:00:00Z",
+                "2026-01-01T04:00:00Z",
+                "2026-01-01T06:00:00Z",
+                "2026-01-01T08:00:00Z",  # half-open end: excluded
+            ],
+            "value": range(6),
+        }
+    )
+
+    selected, quality = _apply_collection_window(
+        df,
+        "snapshot_utc",
+        start_utc="2026-01-01T00:00:00Z",
+        end_utc="2026-01-01T08:00:00Z",
+        poll_interval_hours=2,
+    )
+
+    assert len(selected) == 4
+    assert quality["expected_snapshot_slots"] == 4
+    assert quality["observed_snapshot_times"] == 5
+    assert quality["occupied_snapshot_slots"] == 4
+    assert quality["duplicate_slot_snapshot_times"] == 1
+    assert quality["duplicate_slot_rows_excluded"] == 1
+    assert quality["snapshot_coverage_fraction"] == 1.0
+    assert quality["max_snapshot_gap_hours"] == 2.0
+    assert quality["window_excluded_rows"] == 2
+
+
+def test_frozen_half_open_bins_accept_all_real_collection_times_without_rounding():
+    df = pd.DataFrame(
+        {
+            "collection_id": [
+                "20260716_164008",
+                "20260716_193651",
+                "20260716_211950",
+            ],
+            "snapshot_utc": [
+                "2026-07-16T16:40:08Z",
+                "2026-07-16T19:36:51Z",
+                "2026-07-16T21:19:50Z",
+            ],
+        }
+    )
+    records = df.to_dict("records")
+    for record in records:
+        record["input_sha256"] = "a" * 64
+
+    selected, quality = _apply_collection_window(
+        df,
+        "snapshot_utc",
+        start_utc="2026-07-16T16:17:00Z",
+        end_utc="2026-09-14T16:17:00Z",
+        poll_interval_hours=2,
+        snapshot_records=records,
+    )
+
+    assert selected["collection_id"].tolist() == [
+        "20260716_164008",
+        "20260716_193651",
+        "20260716_211950",
+    ]
+    assert quality["occupied_snapshot_slots"] == 3
+    assert quality["unique_tle_input_hashes"] == 1
+    assert quality["tle_input_hash_diversity_fraction"] == pytest.approx(1 / 3)
+
+
+def test_collection_window_reports_missing_trailing_slots():
+    df = pd.DataFrame(
+        {"snapshot_utc": ["2026-01-01T00:00:00Z", "2026-01-01T02:00:00Z"]}
+    )
+
+    _, quality = _apply_collection_window(
+        df,
+        "snapshot_utc",
+        start_utc="2026-01-01T00:00:00Z",
+        end_utc="2026-01-01T08:00:00Z",
+        poll_interval_hours=2,
+    )
+
+    assert quality["snapshot_coverage_fraction"] == 0.5
+    assert quality["max_snapshot_gap_hours"] == 6.0
+
+
+def test_collection_window_gates_real_elapsed_gap_not_only_adjacent_bins():
+    df = pd.DataFrame(
+        {
+            "snapshot_utc": [
+                "2026-01-01T00:01:00Z",
+                "2026-01-01T03:59:00Z",
+                "2026-01-01T04:01:00Z",
+            ]
+        }
+    )
+
+    _, quality = _apply_collection_window(
+        df,
+        "snapshot_utc",
+        start_utc="2026-01-01T00:00:00Z",
+        end_utc="2026-01-01T06:00:00Z",
+        poll_interval_hours=2,
+    )
+
+    assert quality["occupied_snapshot_slots"] == 3
+    assert quality["max_nominal_bin_gap_hours"] == 2.0
+    assert quality["max_snapshot_gap_hours"] == pytest.approx(3 + 58 / 60)
+
+
+def test_collection_coverage_uses_resimulation_records_including_zero_candidates():
+    df = pd.DataFrame(
+        {
+            "collection_id": ["a", "c"],
+            "snapshot_utc": ["2026-01-01T00:00:00Z", "2026-01-01T04:00:00Z"],
+        }
+    )
+    records = [
+        {"collection_id": "a", "snapshot_utc": "2026-01-01T00:00:00Z", "input_sha256": "a" * 64},
+        {"collection_id": "b", "snapshot_utc": "2026-01-01T02:00:00Z", "input_sha256": "b" * 64},
+        {"collection_id": "c", "snapshot_utc": "2026-01-01T04:00:00Z", "input_sha256": "c" * 64},
+        {"collection_id": "d", "snapshot_utc": "2026-01-01T06:00:00Z", "input_sha256": "d" * 64},
+    ]
+
+    selected, quality = _apply_collection_window(
+        df,
+        "snapshot_utc",
+        start_utc="2026-01-01T00:00:00Z",
+        end_utc="2026-01-01T08:00:00Z",
+        poll_interval_hours=2,
+        snapshot_records=records,
+    )
+
+    assert selected["collection_id"].tolist() == ["a", "c"]
+    assert quality["coverage_source"] == "resimulation_snapshot_records"
+    assert quality["occupied_snapshot_slots"] == 4
+    assert quality["snapshot_coverage_fraction"] == 1.0
+    assert quality["max_snapshot_gap_hours"] == 2.0
+    assert quality["unique_tle_input_hashes"] == 4
+    assert quality["tle_input_hash_diversity_fraction"] == 1.0
+
+
+def test_compare_models_fails_closed_on_incomplete_collection_window(tmp_path):
+    df = _synthetic_dataset(80, seed=33)
+    # All rows occupy only the first two of four expected slots.
+    df["snapshot_utc"] = np.where(
+        np.arange(len(df)) % 2 == 0,
+        "2026-01-01T00:00:00Z",
+        "2026-01-01T02:00:00Z",
+    )
+    df["collection_id"] = np.where(
+        np.arange(len(df)) % 2 == 0,
+        "20260101_000000",
+        "20260101_020000",
+    )
+    dataset_path = tmp_path / "window.csv"
+    df.to_csv(dataset_path, index=False)
+
+    report = compare_models(
+        dataset_path,
+        tmp_path / "report.csv",
+        time_column="snapshot_utc",
+        collection_start_utc="2026-01-01T00:00:00Z",
+        collection_end_utc="2026-01-01T08:00:00Z",
+        poll_interval_hours=2,
+        min_snapshot_coverage_fraction=0.9,
+        max_snapshot_gap_hours=3,
+        min_tle_hash_diversity_fraction=0.5,
+        max_identical_tle_hash_run_bins=2,
+        snapshot_records=[
+            {
+                "collection_id": "20260101_000000",
+                "snapshot_utc": "2026-01-01T00:00:00Z",
+                "input_sha256": "a" * 64,
+            },
+            {
+                "collection_id": "20260101_020000",
+                "snapshot_utc": "2026-01-01T02:00:00Z",
+                "input_sha256": "b" * 64,
+            },
+        ],
+    )
+
+    assert report["model"].tolist() == ["not_enough_data"]
+    assert report.iloc[0]["snapshot_coverage_fraction"] == 0.5
+    assert "snapshot_coverage_fraction" in report.iloc[0]["note"]
+    assert "max_snapshot_gap_hours" in report.iloc[0]["note"]
 
 
 def test_compare_models_reports_pr_auc_and_roc_auc(tmp_path):
@@ -337,8 +532,10 @@ def test_compare_to_baseline_pr_auc_reports_deltas():
     text = compare_to_baseline_pr_auc(report)
 
     assert "fixed_threshold PR-AUC = 0.5000 (baseline)" in text
-    assert "random_forest PR-AUC = 0.8000 (beats baseline, delta=+0.3000)" in text
-    assert "logistic_regression PR-AUC = 0.3000 (does not beat baseline, delta=-0.2000)" in text
+    assert "observed higher than baseline" in text
+    assert "uncertainty is reported separately" in text
+    assert "random_forest PR-AUC = 0.8000 (observed higher than baseline" in text
+    assert "logistic_regression PR-AUC = 0.3000 (not observed higher than baseline" in text
 
 
 def test_compare_to_baseline_pr_auc_without_baseline_row():
@@ -367,6 +564,8 @@ def test_time_series_cv_report_aggregates_mean_and_std(tmp_path):
     assert row["mean"] is not None
     assert row["std"] is not None
     assert report_path.exists()
+    assert report_path.with_name("cv_report_folds.csv").exists()
+    assert report_path.with_name("cv_report_adaptability.csv").exists()
 
 
 def test_time_series_cv_report_handles_too_few_rows(tmp_path):
@@ -445,6 +644,67 @@ def test_feature_ablation_removes_only_rule_defining_predictors(tmp_path):
     provenance = (tmp_path / "ablated.csv").read_text(encoding="utf-8").splitlines()
     config_line = next(line for line in provenance if line.startswith("# config:"))
     assert all(feature not in config_line for feature in removed)
+
+
+def test_snapshot_only_primary_features_exclude_all_forward_tca_quantities():
+    assert SNAPSHOT_ONLY_FEATURES == [
+        "current_distance_km",
+        "altitude_difference_km",
+        "max_tle_age_hours",
+        "radial_velocity_km_s",
+        "tangential_velocity_km_s",
+        "approach_angle_deg",
+    ]
+    forward_or_label_reconstructing = {
+        "time_to_tca_min",
+        "min_distance_km",
+        "relative_velocity_km_s",
+        "relative_radial_km",
+        "relative_intrack_km",
+        "relative_crosstrack_km",
+        "relative_inclination_deg",
+    }
+    assert forward_or_label_reconstructing.isdisjoint(SNAPSHOT_ONLY_FEATURES)
+
+
+def test_temporal_consistency_is_descriptive_and_requires_every_requested_fold():
+    supported = temporal_consistency_summary(
+        "xgboost",
+        [0.03, 0.01, 0.04, 0.02, 0.05],
+        primary_model="xgboost",
+        requested_folds=5,
+        minimum_folds=5,
+    )
+    assert supported["adaptability_supported"] is True
+    assert supported["statistical_significance_tested"] is False
+    assert supported["all_requested_folds_valid"] is True
+    assert supported["positive_delta_fraction"] == 1.0
+    assert "not a statistical-significance claim" in supported["claim"]
+
+    nonpositive = temporal_consistency_summary(
+        "xgboost",
+        [0.03, 0.01, 0.0, 0.02, 0.05],
+        primary_model="xgboost",
+        requested_folds=5,
+        minimum_folds=5,
+    )
+    missing_fold = temporal_consistency_summary(
+        "xgboost",
+        [0.03, 0.01, 0.04, 0.02],
+        primary_model="xgboost",
+        requested_folds=5,
+        minimum_folds=5,
+    )
+    nonprimary = temporal_consistency_summary(
+        "random_forest",
+        [0.03, 0.01, 0.04, 0.02, 0.05],
+        primary_model="xgboost",
+        requested_folds=5,
+        minimum_folds=5,
+    )
+    assert nonpositive["adaptability_supported"] is False
+    assert missing_fold["adaptability_supported"] is False
+    assert nonprimary["adaptability_supported"] is False
 
 
 def test_compare_models_rejects_empty_feature_ablation(tmp_path):

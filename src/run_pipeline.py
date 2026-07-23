@@ -13,8 +13,8 @@ from space_debris.core import (
     write_pair_results,
 )
 from space_debris.experiment import DEFAULT_EXPERIMENT_CONFIG, load_experiment_config
-from space_debris.ml import compare_models, compare_to_baseline_pr_auc
-from space_debris.plots import create_pipeline_plots, create_publication_plots, create_top_pair_physical_plots
+from space_debris.ml import FEATURE_SETS, compare_models, compare_to_baseline_pr_auc, feature_set_by_name
+from space_debris.plots import create_pipeline_plots, create_top_pair_physical_plots
 from space_debris.provenance import png_provenance_metadata
 
 
@@ -69,6 +69,17 @@ def parse_args() -> argparse.Namespace:
                         help="ground-truth: risky only if v_rel >= this at TCA")
     parser.add_argument("--max-tle-age-hours", type=float, default=config.max_tle_age_hours,
                         help="warn if any TLE epoch is older than this (default 14 days)")
+    parser.add_argument(
+        "--feature-set", choices=sorted(FEATURE_SETS), default="snapshot_only",
+        help=(
+            "'snapshot_only' (default): predictors available before the TCA search, "
+            "the practical predictive-power result. 'full_rule_recovery': also gives "
+            "the model min_distance_km/relative_velocity_km_s, which define risk_label; "
+            "this measures rule *recovery*, not predictive power, and is reported as a "
+            "separate, clearly labelled diagnostic in the paper, never as the headline "
+            "predictive-accuracy claim."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -113,8 +124,16 @@ def main() -> None:
         f"label_threshold_km={args.label_threshold_km} "
         f"label_relative_velocity_km_s={args.label_relative_velocity_km_s} "
         f"candidate_threshold_km={args.candidate_threshold_km} "
-        f"fixed_threshold_km={args.fixed_threshold_km}"
+        f"fixed_threshold_km={args.fixed_threshold_km} "
+        f"feature_set={args.feature_set}"
     )
+    if args.feature_set == "full_rule_recovery":
+        print(
+            "NOTE: --feature-set=full_rule_recovery gives the model "
+            "min_distance_km/relative_velocity_km_s, the two quantities that define "
+            "risk_label. This measures how well the model recovers a known rule, NOT "
+            "predictive power on unseen risk -- see README 'What is (and isn't) claimed'."
+        )
 
     # ``dataset_path`` keeps every simulated pair for inspection, but — per the
     # paper — the classifier is trained on the *identified conjunctions* only.
@@ -124,18 +143,21 @@ def main() -> None:
     # can avoid.
     write_pair_results(dataset_path, rows, source=source, config_summary=config_summary)
     write_pair_results(conjunction_path, conjunctions, source=source, config_summary=config_summary)
-    report = compare_models(conjunction_path, ml_report_path, source=source, config_summary=config_summary)
+    report = compare_models(
+        conjunction_path, ml_report_path, source=source, config_summary=config_summary,
+        feature_columns=feature_set_by_name(args.feature_set),
+    )
     scientific_plots = create_pipeline_plots(
         dataset_path=conjunction_path,
         model_report_path=ml_report_path,
         output_dir=output_dir,
         candidate_threshold_km=args.candidate_threshold_km,
     )
-    publication_plots = create_publication_plots(
-        dataset_path=conjunction_path,
-        output_dir=output_dir,
-        current_threshold_km=args.fixed_threshold_km,
-    )
+    # Publication-grade plots require the frozen evaluation manifest,
+    # predictions, and feature-importance artifacts that only
+    # `train_from_history.py` produces (see space_debris.plots.create_publication_plots);
+    # this one-shot pipeline has no frozen evidence to hand it and does not
+    # attempt to fake one.
 
     if rows:
         top = rows[0]
@@ -186,14 +208,13 @@ def main() -> None:
     print(f"Identified conjunctions : {len(conjunctions)}")
     print(f"Dataset                 : {dataset_path}")
     print(f"Conjunctions            : {conjunction_path}")
+    print(f"Feature set             : {args.feature_set}")
     print(f"Model report            : {ml_report_path}")
     if rows:
         print(f"Top pair timeseries     : {top_pair_timeseries_path}")
         print(f"Top pair plot           : {top_pair_plot_path}")
     for plot_path in scientific_plots:
         print(f"Scientific plot         : {plot_path}")
-    for plot_path in publication_plots:
-        print(f"Publication plot        : {plot_path}")
     if rows:
         for plot_path in physical_plots:
             print(f"Physical plot           : {plot_path}")

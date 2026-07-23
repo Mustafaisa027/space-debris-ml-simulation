@@ -1,12 +1,13 @@
 {
-  "duration_days": 60,
+  "experiment_id": "iac26-10d-v2",
+  "duration_days": 10,
   "poll_interval_hours": 2,
   "provider": "auto",
   "source": "CelesTrak GP API with credentialed Space-Track fallback",
-  "note": "Thresholds are in km and are physically interpretable conjunction-screening scales, not the earlier 3000-10000 km placeholders.",
+  "note": "Pre-registered 10-day schema-3 experiment. The earlier 60-day v1 archive is retained as pilot data and is not pooled into v2.",
   "default_query": {
     "preset": "leo_mixed",
-    "catalog_version": "iac26-leo-mixed-75-v1",
+    "catalog_version": "iac26-leo-mixed-75-v2",
     "catalog_sha256": "64c3d2329281da0e246226cb552aafe3b961c553c9487d7cfd9c96374aaa1f4c",
     "max_objects": 75
   },
@@ -24,19 +25,19 @@
   },
   "evaluation": {
     "time_column": "snapshot_utc",
-    "train_time_fraction": 0.50,
+    "train_time_fraction": 0.40,
     "test_pair_fraction": 0.25,
-    "pair_seed": "iac26-pair-split-v1",
+    "pair_seed": "iac26-pair-split-v2",
     "collection_window": {
-      "start_utc": "2026-07-16T16:17:00Z",
-      "end_utc": "2026-09-14T16:17:00Z",
+      "start_utc": "2026-07-24T00:17:00Z",
+      "end_utc": "2026-08-03T00:17:00Z",
       "slot_anchor_basis": "github_actions_cron_17_even_utc",
       "slot_timestamp_field": "snapshot_utc",
       "slot_assignment": "half_open_snapshot_bins",
       "min_snapshot_coverage_fraction": 0.90,
       "max_snapshot_gap_hours": 6,
-      "min_tle_hash_diversity_fraction": 0.50,
-      "max_identical_tle_hash_run_bins": 12
+      "min_tle_hash_diversity_fraction": 0.30,
+      "max_identical_tle_hash_run_bins": 6
     },
     "evidence": {
       "primary_model": "xgboost",
@@ -44,7 +45,7 @@
       "required_models": ["logistic_regression", "random_forest", "svm", "xgboost"],
       "inner_train_time_fraction": 0.75,
       "inner_validation_pair_fraction": 0.25,
-      "inner_pair_seed": "iac26-operating-point-v1",
+      "inner_pair_seed": "iac26-operating-point-v2",
       "min_inner_train_positive_rows": 20,
       "min_inner_validation_positive_rows": 10,
       "min_inner_train_positive_pairs": 5,
@@ -52,19 +53,19 @@
       "min_inner_train_positive_snapshots": 3,
       "min_inner_validation_positive_snapshots": 2,
       "bootstrap_replicates": 2000,
-      "bootstrap_seed": 114764,
+      "bootstrap_seed": 214764,
       "confidence_level": 0.95,
       "recall_noninferiority_margin": 0.05,
       "min_valid_bootstrap_fraction": 0.90,
       "adaptability_min_folds": 5,
       "adaptability_bootstrap_replicates": 10000,
-      "adaptability_block_hours": 48,
+      "adaptability_block_hours": 12,
       "adaptability_embargo_hours": 2,
       "adaptability_min_blocks": 10,
       "adaptability_min_unique_objects": 30,
       "adaptability_min_pairs": 30,
       "adaptability_min_positive_pairs_per_block": 5,
-      "adaptability_min_positive_days_per_block": 2
+      "adaptability_min_positive_days_per_block": 1
     },
     "quality_gate": {
       "min_train_positive_rows": 30,
@@ -76,14 +77,15 @@
     }
   },
   "outputs": {
-    "snapshots": "data/tle_snapshots_iac26_75_v1",
-    "runs": "outputs/runs_iac26_75_v1",
-    "history": "outputs/history/conjunction_observations_iac26_75_v1.csv",
-    "archive_import_report": "outputs/history/collection_archive_import_iac26_75_v1.json",
-    "history_rebuild_report": "outputs/history/history_rebuild_report_iac26_75_v1.json",
-    "resimulated_runs": "outputs/resimulated_runs_iac26_75_v1",
-    "resimulated_history": "outputs/history/conjunction_observations_resimulated_iac26_75_v1.csv",
-    "resimulation_report": "outputs/history/resimulation_report_iac26_75_v1.json",
-    "time_split_report": "outputs/history/model_comparison_iac26_75_v1_pair_grouped_time_split.csv"
+    "archive_collections": "experiments/iac26-10d-v2/collections",
+    "snapshots": "data/tle_snapshots_iac26_75_v2",
+    "runs": "outputs/runs_iac26_75_v2",
+    "history": "outputs/history/conjunction_observations_iac26_75_v2.csv",
+    "archive_import_report": "outputs/history/collection_archive_import_iac26_75_v2.json",
+    "history_rebuild_report": "outputs/history/history_rebuild_report_iac26_75_v2.json",
+    "resimulated_runs": "outputs/resimulated_runs_iac26_75_v2",
+    "resimulated_history": "outputs/history/conjunction_observations_resimulated_iac26_75_v2.csv",
+    "resimulation_report": "outputs/history/resimulation_report_iac26_75_v2.json",
+    "time_split_report": "outputs/history/model_comparison_iac26_75_v2_pair_grouped_time_split.csv"
   }
 }

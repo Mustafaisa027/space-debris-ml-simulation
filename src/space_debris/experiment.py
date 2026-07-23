@@ -1,12 +1,20 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import math
+import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 
 DEFAULT_EXPERIMENT_CONFIG = Path("config/experiment_60_days.json")
+ACTIVE_EXPERIMENT_CONFIG = Path("config/experiment_10_days_v2.json")
+CLAIM_ELIGIBLE_EXPERIMENT_CONFIGS = (
+    DEFAULT_EXPERIMENT_CONFIG,
+    ACTIVE_EXPERIMENT_CONFIG,
+)
 DEFAULT_QUALITY_GATE = {
     "min_train_positive_rows": 30,
     "min_test_positive_rows": 20,
@@ -14,6 +22,34 @@ DEFAULT_QUALITY_GATE = {
     "min_test_positive_pairs": 5,
     "min_train_positive_snapshots": 5,
     "min_test_positive_snapshots": 3,
+}
+DEFAULT_EVIDENCE = {
+    "primary_model": "xgboost",
+    "primary_feature_set": "snapshot_only",
+    "required_models": ["logistic_regression", "random_forest", "svm", "xgboost"],
+    "inner_train_time_fraction": 0.75,
+    "inner_validation_pair_fraction": 0.25,
+    "inner_pair_seed": "iac26-operating-point-v1",
+    "min_inner_train_positive_rows": 20,
+    "min_inner_validation_positive_rows": 10,
+    "min_inner_train_positive_pairs": 5,
+    "min_inner_validation_positive_pairs": 3,
+    "min_inner_train_positive_snapshots": 3,
+    "min_inner_validation_positive_snapshots": 2,
+    "bootstrap_replicates": 2000,
+    "bootstrap_seed": 114764,
+    "confidence_level": 0.95,
+    "recall_noninferiority_margin": 0.05,
+    "min_valid_bootstrap_fraction": 0.90,
+    "adaptability_min_folds": 5,
+    "adaptability_bootstrap_replicates": 10000,
+    "adaptability_block_hours": 48,
+    "adaptability_embargo_hours": 2,
+    "adaptability_min_blocks": 10,
+    "adaptability_min_unique_objects": 30,
+    "adaptability_min_pairs": 30,
+    "adaptability_min_positive_pairs_per_block": 5,
+    "adaptability_min_positive_days_per_block": 2,
 }
 
 
@@ -23,9 +59,31 @@ def _positive_integer(value: object, field: str) -> int:
     return value
 
 
+def _nonnegative_integer(value: object, field: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{field} must be a non-negative integer")
+    return value
+
+
+def _optional_utc(value: object, field: str) -> str | None:
+    if value in (None, ""):
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{field} must be an ISO-8601 UTC string")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"{field} must be an ISO-8601 UTC string") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() != timezone.utc.utcoffset(parsed):
+        raise ValueError(f"{field} must include the UTC timezone")
+    return parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 @dataclass(frozen=True)
 class ExperimentConfig:
     path: Path
+    experiment_id: str
+    config_sha256: str
     duration_days: float
     poll_interval_hours: float
     provider: str
@@ -47,15 +105,52 @@ class ExperimentConfig:
     train_time_fraction: float
     test_pair_fraction: float
     pair_seed: str
+    collection_start_utc: str | None
+    collection_end_utc: str | None
+    collection_slot_anchor_basis: str | None
+    collection_slot_timestamp_field: str | None
+    collection_slot_assignment: str | None
+    min_snapshot_coverage_fraction: float | None
+    max_snapshot_gap_hours: float | None
+    min_tle_hash_diversity_fraction: float | None
+    max_identical_tle_hash_run_bins: int | None
+    inner_train_time_fraction: float
+    inner_validation_pair_fraction: float
+    inner_pair_seed: str
+    primary_model: str
+    primary_feature_set: str
+    required_models: tuple[str, ...]
+    min_inner_train_positive_rows: int
+    min_inner_validation_positive_rows: int
+    min_inner_train_positive_pairs: int
+    min_inner_validation_positive_pairs: int
+    min_inner_train_positive_snapshots: int
+    min_inner_validation_positive_snapshots: int
+    bootstrap_replicates: int
+    bootstrap_seed: int
+    confidence_level: float
+    recall_noninferiority_margin: float
+    min_valid_bootstrap_fraction: float
+    adaptability_min_folds: int
+    adaptability_bootstrap_replicates: int
+    adaptability_block_hours: float
+    adaptability_embargo_hours: float
+    adaptability_min_blocks: int
+    adaptability_min_unique_objects: int
+    adaptability_min_pairs: int
+    adaptability_min_positive_pairs_per_block: int
+    adaptability_min_positive_days_per_block: int
     min_train_positive_rows: int
     min_test_positive_rows: int
     min_train_positive_pairs: int
     min_test_positive_pairs: int
     min_train_positive_snapshots: int
     min_test_positive_snapshots: int
+    archive_collections: str
     snapshot_dir: str
     run_root: str
     history: str
+    archive_import_report: str
     history_rebuild_report: str
     resimulated_runs: str
     resimulated_history: str
@@ -71,13 +166,26 @@ def load_experiment_config(path: str | Path = DEFAULT_EXPERIMENT_CONFIG) -> Expe
         query = raw["default_query"]
         simulation = raw["simulation"]
         evaluation = raw["evaluation"]
+        collection_window = evaluation.get("collection_window", {})
+        evidence = {**DEFAULT_EVIDENCE, **evaluation.get("evidence", {})}
         quality_gate = {
             **DEFAULT_QUALITY_GATE,
             **evaluation.get("quality_gate", {}),
         }
         outputs = raw["outputs"]
+        canonical_config = json.dumps(
+            raw, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode("utf-8")
         config = ExperimentConfig(
             path=config_path,
+            experiment_id=str(
+                raw.get("experiment_id")
+                or query.get(
+                    "catalog_version",
+                    f"{query['preset']}-legacy-unspecified",
+                )
+            ),
+            config_sha256=hashlib.sha256(canonical_config).hexdigest(),
             duration_days=float(raw["duration_days"]),
             poll_interval_hours=float(raw["poll_interval_hours"]),
             provider=str(raw.get("provider", "auto")),
@@ -101,6 +209,118 @@ def load_experiment_config(path: str | Path = DEFAULT_EXPERIMENT_CONFIG) -> Expe
             train_time_fraction=float(evaluation["train_time_fraction"]),
             test_pair_fraction=float(evaluation["test_pair_fraction"]),
             pair_seed=str(evaluation["pair_seed"]),
+            collection_start_utc=_optional_utc(
+                collection_window.get("start_utc"), "collection_window.start_utc"
+            ),
+            collection_end_utc=_optional_utc(
+                collection_window.get("end_utc"), "collection_window.end_utc"
+            ),
+            collection_slot_anchor_basis=(
+                str(collection_window["slot_anchor_basis"])
+                if "slot_anchor_basis" in collection_window
+                else None
+            ),
+            collection_slot_timestamp_field=(
+                str(collection_window["slot_timestamp_field"])
+                if "slot_timestamp_field" in collection_window
+                else None
+            ),
+            collection_slot_assignment=(
+                str(collection_window["slot_assignment"])
+                if "slot_assignment" in collection_window
+                else None
+            ),
+            min_snapshot_coverage_fraction=(
+                float(collection_window["min_snapshot_coverage_fraction"])
+                if "min_snapshot_coverage_fraction" in collection_window
+                else None
+            ),
+            max_snapshot_gap_hours=(
+                float(collection_window["max_snapshot_gap_hours"])
+                if "max_snapshot_gap_hours" in collection_window
+                else None
+            ),
+            min_tle_hash_diversity_fraction=(
+                float(collection_window["min_tle_hash_diversity_fraction"])
+                if "min_tle_hash_diversity_fraction" in collection_window
+                else None
+            ),
+            max_identical_tle_hash_run_bins=(
+                _positive_integer(
+                    collection_window["max_identical_tle_hash_run_bins"],
+                    "collection_window.max_identical_tle_hash_run_bins",
+                )
+                if "max_identical_tle_hash_run_bins" in collection_window
+                else None
+            ),
+            inner_train_time_fraction=float(evidence["inner_train_time_fraction"]),
+            inner_validation_pair_fraction=float(
+                evidence["inner_validation_pair_fraction"]
+            ),
+            inner_pair_seed=str(evidence["inner_pair_seed"]),
+            primary_model=str(evidence["primary_model"]),
+            primary_feature_set=str(evidence["primary_feature_set"]),
+            required_models=tuple(str(value) for value in evidence["required_models"]),
+            min_inner_train_positive_rows=_positive_integer(
+                evidence["min_inner_train_positive_rows"], "min_inner_train_positive_rows"
+            ),
+            min_inner_validation_positive_rows=_positive_integer(
+                evidence["min_inner_validation_positive_rows"],
+                "min_inner_validation_positive_rows",
+            ),
+            min_inner_train_positive_pairs=_positive_integer(
+                evidence["min_inner_train_positive_pairs"], "min_inner_train_positive_pairs"
+            ),
+            min_inner_validation_positive_pairs=_positive_integer(
+                evidence["min_inner_validation_positive_pairs"],
+                "min_inner_validation_positive_pairs",
+            ),
+            min_inner_train_positive_snapshots=_positive_integer(
+                evidence["min_inner_train_positive_snapshots"],
+                "min_inner_train_positive_snapshots",
+            ),
+            min_inner_validation_positive_snapshots=_positive_integer(
+                evidence["min_inner_validation_positive_snapshots"],
+                "min_inner_validation_positive_snapshots",
+            ),
+            bootstrap_replicates=_positive_integer(
+                evidence["bootstrap_replicates"], "bootstrap_replicates"
+            ),
+            bootstrap_seed=_nonnegative_integer(evidence["bootstrap_seed"], "bootstrap_seed"),
+            confidence_level=float(evidence["confidence_level"]),
+            recall_noninferiority_margin=float(
+                evidence["recall_noninferiority_margin"]
+            ),
+            min_valid_bootstrap_fraction=float(
+                evidence["min_valid_bootstrap_fraction"]
+            ),
+            adaptability_min_folds=_positive_integer(
+                evidence["adaptability_min_folds"], "adaptability_min_folds"
+            ),
+            adaptability_bootstrap_replicates=_positive_integer(
+                evidence["adaptability_bootstrap_replicates"],
+                "adaptability_bootstrap_replicates",
+            ),
+            adaptability_block_hours=float(evidence["adaptability_block_hours"]),
+            adaptability_embargo_hours=float(evidence["adaptability_embargo_hours"]),
+            adaptability_min_blocks=_positive_integer(
+                evidence["adaptability_min_blocks"], "adaptability_min_blocks"
+            ),
+            adaptability_min_unique_objects=_positive_integer(
+                evidence["adaptability_min_unique_objects"],
+                "adaptability_min_unique_objects",
+            ),
+            adaptability_min_pairs=_positive_integer(
+                evidence["adaptability_min_pairs"], "adaptability_min_pairs"
+            ),
+            adaptability_min_positive_pairs_per_block=_positive_integer(
+                evidence["adaptability_min_positive_pairs_per_block"],
+                "adaptability_min_positive_pairs_per_block",
+            ),
+            adaptability_min_positive_days_per_block=_positive_integer(
+                evidence["adaptability_min_positive_days_per_block"],
+                "adaptability_min_positive_days_per_block",
+            ),
             min_train_positive_rows=_positive_integer(
                 quality_gate["min_train_positive_rows"], "min_train_positive_rows"
             ),
@@ -119,9 +339,16 @@ def load_experiment_config(path: str | Path = DEFAULT_EXPERIMENT_CONFIG) -> Expe
             min_test_positive_snapshots=_positive_integer(
                 quality_gate["min_test_positive_snapshots"], "min_test_positive_snapshots"
             ),
+            archive_collections=str(outputs.get("archive_collections", "collections")),
             snapshot_dir=str(outputs["snapshots"]),
             run_root=str(outputs["runs"]),
             history=str(outputs["history"]),
+            archive_import_report=str(
+                outputs.get(
+                    "archive_import_report",
+                    "outputs/history/collection_archive_import.json",
+                )
+            ),
             history_rebuild_report=str(outputs["history_rebuild_report"]),
             resimulated_runs=str(outputs["resimulated_runs"]),
             resimulated_history=str(outputs["resimulated_history"]),
@@ -166,6 +393,8 @@ def load_experiment_config(path: str | Path = DEFAULT_EXPERIMENT_CONFIG) -> Expe
         config.max_tle_age_hours,
         config.train_time_fraction,
         config.test_pair_fraction,
+        config.adaptability_block_hours,
+        config.adaptability_embargo_hours,
     ]
     if not all(math.isfinite(float(value)) for value in numeric_values):
         raise ValueError("experiment numeric values must be finite")
@@ -173,8 +402,94 @@ def load_experiment_config(path: str | Path = DEFAULT_EXPERIMENT_CONFIG) -> Expe
         raise ValueError("candidate_threshold_km must include both fixed and proxy-label thresholds")
     if not 0 < config.train_time_fraction < 1 or not 0 < config.test_pair_fraction < 1:
         raise ValueError("evaluation split fractions must be between 0 and 1")
-    if not config.time_column or not config.pair_seed or not config.catalog_version:
+    if config.adaptability_block_hours <= 0 or config.adaptability_embargo_hours < 0:
+        raise ValueError("adaptability block hours must be positive and embargo non-negative")
+    if config.adaptability_embargo_hours >= config.adaptability_block_hours:
+        raise ValueError("adaptability embargo must be shorter than each test block")
+    if (
+        not config.time_column
+        or not config.pair_seed
+        or not config.catalog_version
+        or not config.experiment_id
+    ):
         raise ValueError("evaluation identity fields and catalog_version must be non-empty")
+    if not re.fullmatch(r"[a-z0-9][a-z0-9._-]*", config.experiment_id):
+        raise ValueError("experiment_id must be a safe lowercase versioned identifier")
+    archive_collections = Path(config.archive_collections)
+    if (
+        archive_collections.is_absolute()
+        or ".." in archive_collections.parts
+        or not archive_collections.parts
+        or archive_collections.name != "collections"
+    ):
+        raise ValueError(
+            "outputs.archive_collections must be a relative path ending in 'collections'"
+        )
+    window_values = (
+        config.collection_start_utc,
+        config.collection_end_utc,
+        config.collection_slot_anchor_basis,
+        config.collection_slot_timestamp_field,
+        config.collection_slot_assignment,
+        config.min_snapshot_coverage_fraction,
+        config.max_snapshot_gap_hours,
+        config.min_tle_hash_diversity_fraction,
+        config.max_identical_tle_hash_run_bins,
+    )
+    if any(value is not None for value in window_values) and not all(
+        value is not None for value in window_values
+    ):
+        raise ValueError("collection_window fields must be configured together")
+    if config.collection_start_utc is not None:
+        if config.collection_slot_anchor_basis != "github_actions_cron_17_even_utc":
+            raise ValueError(
+                "collection_window.slot_anchor_basis must identify the frozen GitHub cron anchor"
+            )
+        if config.collection_slot_timestamp_field != "snapshot_utc":
+            raise ValueError(
+                "collection_window.slot_timestamp_field must be 'snapshot_utc'"
+            )
+        if config.collection_slot_assignment != "half_open_snapshot_bins":
+            raise ValueError(
+                "collection_window.slot_assignment must be 'half_open_snapshot_bins'"
+            )
+        start = datetime.fromisoformat(config.collection_start_utc.replace("Z", "+00:00"))
+        end = datetime.fromisoformat(config.collection_end_utc.replace("Z", "+00:00"))
+        if end <= start:
+            raise ValueError("collection_window.end_utc must be after start_utc")
+        configured_days = (end - start).total_seconds() / 86400.0
+        if not math.isclose(configured_days, config.duration_days, rel_tol=0.0, abs_tol=1e-9):
+            raise ValueError("collection_window duration must equal duration_days")
+        if not 0 < config.min_snapshot_coverage_fraction <= 1:
+            raise ValueError("min_snapshot_coverage_fraction must be in (0, 1]")
+        if not math.isfinite(config.max_snapshot_gap_hours) or config.max_snapshot_gap_hours <= 0:
+            raise ValueError("max_snapshot_gap_hours must be positive and finite")
+        if config.max_snapshot_gap_hours < config.poll_interval_hours:
+            raise ValueError("max_snapshot_gap_hours cannot be below the normal poll interval")
+        if not 0 < config.min_tle_hash_diversity_fraction <= 1:
+            raise ValueError("min_tle_hash_diversity_fraction must be in (0, 1]")
+    if not 0 < config.inner_train_time_fraction < 1:
+        raise ValueError("inner_train_time_fraction must be between 0 and 1")
+    if not 0 < config.inner_validation_pair_fraction < 1:
+        raise ValueError("inner_validation_pair_fraction must be between 0 and 1")
+    if not config.inner_pair_seed:
+        raise ValueError("inner_pair_seed must be non-empty")
+    if not config.primary_model or not config.required_models:
+        raise ValueError("primary_model and required_models must be non-empty")
+    if len(set(config.required_models)) != len(config.required_models):
+        raise ValueError("required_models cannot contain duplicates")
+    if config.primary_model not in config.required_models:
+        raise ValueError("primary_model must be included in required_models")
+    if config.primary_feature_set != "snapshot_only":
+        raise ValueError(
+            "primary_feature_set must be 'snapshot_only' for the frozen IAC protocol"
+        )
+    if not 0 < config.confidence_level < 1:
+        raise ValueError("confidence_level must be between 0 and 1")
+    if not 0 <= config.recall_noninferiority_margin < 1:
+        raise ValueError("recall_noninferiority_margin must be in [0, 1)")
+    if not 0 < config.min_valid_bootstrap_fraction <= 1:
+        raise ValueError("min_valid_bootstrap_fraction must be in (0, 1]")
     if not config.catalog_version.endswith("-legacy-unspecified"):
         if len(config.catalog_sha256) != 64 or any(
             character not in "0123456789abcdef" for character in config.catalog_sha256.lower()

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
+import hashlib
+import json
 
 import matplotlib
 
@@ -40,11 +42,72 @@ def _ensure_dir(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
 
 
-def _savefig(path: Path, dpi: int = 180) -> None:
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _artifact_source(label: str, path: Path) -> str:
+    return f"{label}={path}; sha256={_file_sha256(path)}"
+
+
+def _validate_evaluation_artifacts(
+    evaluation_manifest_path: Path,
+    predictions_path: Path,
+    feature_importance_path: Path,
+) -> None:
+    manifest = json.loads(Path(evaluation_manifest_path).read_text(encoding="utf-8"))
+    if manifest.get("schema_version") != 3:
+        raise ValueError("Unsupported evaluation manifest schema")
+    if Path(str(manifest.get("predictions", {}).get("path", ""))).resolve() != Path(
+        predictions_path
+    ).resolve():
+        raise ValueError("Prediction path does not match evaluation manifest")
+    if Path(str(manifest.get("feature_importance", {}).get("path", ""))).resolve() != Path(
+        feature_importance_path
+    ).resolve():
+        raise ValueError("Feature-importance path does not match evaluation manifest")
+    expected_predictions = manifest.get("predictions", {}).get("sha256")
+    expected_importance = manifest.get("feature_importance", {}).get("sha256")
+    if _file_sha256(predictions_path) != expected_predictions:
+        raise ValueError("Prediction artifact hash does not match evaluation manifest")
+    if _file_sha256(feature_importance_path) != expected_importance:
+        raise ValueError("Feature-importance hash does not match evaluation manifest")
+    predictions = pd.read_csv(predictions_path, **_CSV_KWARGS)
+    importance = pd.read_csv(feature_importance_path, **_CSV_KWARGS)
+    split_sha = manifest.get("split_manifest", {}).get("split_sha256")
+    if (
+        "split_sha256" not in predictions
+        or predictions["split_sha256"].nunique() != 1
+        or predictions["split_sha256"].iloc[0] != split_sha
+    ):
+        raise ValueError("Prediction artifact split hash does not match evaluation manifest")
+    if not importance.empty and (
+        "split_sha256" not in importance
+        or importance["split_sha256"].nunique() != 1
+        or importance["split_sha256"].iloc[0] != split_sha
+    ):
+        raise ValueError("Feature-importance split hash does not match evaluation manifest")
+
+
+def _savefig(
+    path: Path,
+    dpi: int = 180,
+    *,
+    source: str = "",
+    config_summary: str = "",
+) -> None:
     """Save the current figure with embedded PNG provenance metadata
     (git commit + generation timestamp), then close it.
     """
-    plt.savefig(path, dpi=dpi, metadata=png_provenance_metadata())
+    plt.savefig(
+        path,
+        dpi=dpi,
+        metadata=png_provenance_metadata(source=source, config_summary=config_summary),
+    )
     plt.close()
 
 
@@ -223,7 +286,12 @@ def plot_model_metrics(report_path: Path, output_path: Path) -> None:
             ha="center", va="center", fontsize=12, wrap=True,
         )
         plt.tight_layout()
-        _savefig(output_path, dpi=180)
+        _savefig(
+            output_path,
+            dpi=180,
+            source=_artifact_source("report", report_path),
+            config_summary="quality-gated canonical model report",
+        )
         return
 
     # pr_auc/roc_auc lead; accuracy trails since it is not the headline
@@ -237,7 +305,8 @@ def plot_model_metrics(report_path: Path, output_path: Path) -> None:
     _ensure_dir(output_path)
     x = np.arange(len(plot_df))
     width = 0.18
-    train_rows = int(pd.to_numeric(df.get("train_rows", pd.Series([0])), errors="coerce").fillna(0).max() or 0)
+    train_column = "estimator_train_rows" if "estimator_train_rows" in df.columns else "train_rows"
+    train_rows = int(pd.to_numeric(df.get(train_column, pd.Series([0])), errors="coerce").fillna(0).max() or 0)
     test_rows = int(pd.to_numeric(df.get("test_rows", pd.Series([0])), errors="coerce").fillna(0).max() or 0)
     plt.figure(figsize=(11, 6))
     for index, metric in enumerate(available):
@@ -247,11 +316,18 @@ def plot_model_metrics(report_path: Path, output_path: Path) -> None:
     plt.xticks(x, plot_df["model"], rotation=25, ha="right")
     plt.ylim(0, 1.08)
     plt.ylabel("Score")
-    plt.title(f"Model Performance Comparison (preliminary, train={train_rows}, test={test_rows})")
+    plt.title(
+        f"Model Performance Comparison (preliminary, estimator train={train_rows}, test={test_rows})"
+    )
     plt.grid(axis="y", alpha=0.3)
     plt.legend(ncol=4)
     plt.tight_layout()
-    _savefig(output_path, dpi=180)
+    _savefig(
+        output_path,
+        dpi=180,
+        source=_artifact_source("report", report_path),
+        config_summary="quality-gated canonical model report",
+    )
 
 
 def _to_skyfield_time(ts, dt: datetime):
@@ -545,16 +621,56 @@ def create_pipeline_plots(
 # (operating-characteristic curves), where do the errors land (confusion
 # matrices), which features drive the tree models (feature importance), and
 # how arbitrary is the classical fixed-distance operating point (threshold
-# sensitivity)? These re-fit models purely for plotting via
-# space_debris.ml.model_predictions_for_plotting(); compare_models() /
-# time_series_cv_report() remain the source of truth for the numeric report.
+# sensitivity)? Publication mode consumes the exact frozen prediction and
+# feature-importance artifacts produced by space_debris.evidence. Publication
+# mode is fail-closed: it never refits models from a dataset path.
+
+
+def _publication_predictions(
+    dataset_path: Path,
+    time_column: str | None,
+    predictions_path: Path | None,
+    split_kwargs: dict,
+) -> dict:
+    if predictions_path is None:
+        return model_predictions_for_plotting(
+            dataset_path, time_column=time_column, **split_kwargs
+        )
+    frame = pd.read_csv(predictions_path, **_CSV_KWARGS)
+    required = {"source_row_id", "canonical_pair_id", "y_true", "model", "score", "pred"}
+    missing = sorted(required - set(frame.columns))
+    if missing:
+        raise ValueError(f"Prediction artifact is missing columns: {missing}")
+    result = {}
+    expected_rows = None
+    expected_ids = None
+    for name, group in frame.groupby("model", sort=True):
+        group = group.sort_values("source_row_id", kind="stable")
+        if group["source_row_id"].duplicated().any():
+            raise ValueError(f"Duplicate prediction row IDs for {name}")
+        row_ids = tuple(group["source_row_id"])
+        if expected_rows is None:
+            expected_rows, expected_ids = len(group), row_ids
+        elif len(group) != expected_rows or row_ids != expected_ids:
+            raise ValueError(f"Prediction artifact models are not row-paired: {name}")
+        result[name] = {
+            "y_true": group["y_true"].astype(int).to_numpy(),
+            "scores": group["score"].astype(float).to_numpy(),
+            "pred": group["pred"].astype(int).to_numpy(),
+            "model": None,
+        }
+    return result
 
 
 def plot_pr_curves(
-    dataset_path: Path, output_path: Path, time_column: str | None = None, **split_kwargs
+    dataset_path: Path,
+    output_path: Path,
+    time_column: str | None = None,
+    predictions_path: Path | None = None,
+    **split_kwargs,
 ) -> None:
-    predictions = model_predictions_for_plotting(
-        dataset_path, time_column=time_column, **split_kwargs
+    predictions = _publication_predictions(
+        dataset_path, time_column, predictions_path, split_kwargs
     )
     usable = {name: p for name, p in predictions.items() if len(np.unique(p["y_true"])) == 2}
     if not usable:
@@ -579,11 +695,24 @@ def plot_pr_curves(
     plt.grid(True, alpha=0.3)
     plt.legend(loc="best", fontsize=9)
     plt.tight_layout()
-    _savefig(output_path, dpi=300)
+    _savefig(
+        output_path,
+        dpi=300,
+        source=(
+            _artifact_source("predictions", predictions_path)
+            if predictions_path is not None
+            else f"dataset={dataset_path}"
+        ),
+        config_summary="frozen held-out precision-recall curves",
+    )
 
 
 def plot_false_alarm_recall_curves(
-    dataset_path: Path, output_path: Path, time_column: str | None = None, **split_kwargs
+    dataset_path: Path,
+    output_path: Path,
+    time_column: str | None = None,
+    predictions_path: Path | None = None,
+    **split_kwargs,
 ) -> None:
     """Plot recall against false alarm rate over every score threshold.
 
@@ -593,8 +722,8 @@ def plot_false_alarm_recall_curves(
     baseline contributes its continuous ``-min_distance_km`` ranking here;
     its configured binary operating point remains in the confusion matrices.
     """
-    predictions = model_predictions_for_plotting(
-        dataset_path, time_column=time_column, **split_kwargs
+    predictions = _publication_predictions(
+        dataset_path, time_column, predictions_path, split_kwargs
     )
     usable = {name: p for name, p in predictions.items() if len(np.unique(p["y_true"])) == 2}
     if not usable:
@@ -620,14 +749,27 @@ def plot_false_alarm_recall_curves(
     plt.grid(True, alpha=0.3)
     plt.legend(loc="lower right", fontsize=9)
     plt.tight_layout()
-    _savefig(output_path, dpi=300)
+    _savefig(
+        output_path,
+        dpi=300,
+        source=(
+            _artifact_source("predictions", predictions_path)
+            if predictions_path is not None
+            else f"dataset={dataset_path}"
+        ),
+        config_summary="frozen held-out proxy false-alarm versus recall curves",
+    )
 
 
 def plot_confusion_matrices(
-    dataset_path: Path, output_path: Path, time_column: str | None = None, **split_kwargs
+    dataset_path: Path,
+    output_path: Path,
+    time_column: str | None = None,
+    predictions_path: Path | None = None,
+    **split_kwargs,
 ) -> None:
-    predictions = model_predictions_for_plotting(
-        dataset_path, time_column=time_column, **split_kwargs
+    predictions = _publication_predictions(
+        dataset_path, time_column, predictions_path, split_kwargs
     )
     usable = {name: p for name, p in predictions.items() if len(np.unique(p["y_true"])) == 2}
     if not usable:
@@ -663,25 +805,49 @@ def plot_confusion_matrices(
 
     fig.suptitle("Confusion Matrices by Model (test split)", fontsize=13)
     plt.tight_layout()
-    _savefig(output_path, dpi=300)
+    _savefig(
+        output_path,
+        dpi=300,
+        source=(
+            _artifact_source("predictions", predictions_path)
+            if predictions_path is not None
+            else f"dataset={dataset_path}"
+        ),
+        config_summary="frozen inner-validation operating thresholds",
+    )
 
 
 def plot_feature_importance(
-    dataset_path: Path, output_path: Path, time_column: str | None = None, **split_kwargs
+    dataset_path: Path,
+    output_path: Path,
+    time_column: str | None = None,
+    feature_importance_path: Path | None = None,
+    **split_kwargs,
 ) -> None:
-    predictions = model_predictions_for_plotting(
-        dataset_path, time_column=time_column, **split_kwargs
-    )
     importances: dict[str, np.ndarray] = {}
-    for name in ("decision_tree", "random_forest", "xgboost", "lightgbm"):
-        entry = predictions.get(name)
-        if entry and entry["model"] is not None and hasattr(entry["model"], "feature_importances_"):
-            importances[name] = np.asarray(entry["model"].feature_importances_)
+    feature_names = FEATURES
+    if feature_importance_path is not None:
+        frame = pd.read_csv(feature_importance_path, **_CSV_KWARGS)
+        if not frame.empty:
+            feature_names = list(dict.fromkeys(frame["feature"].astype(str)))
+            for name, group in frame.groupby("model", sort=True):
+                indexed = group.set_index("feature")["importance"]
+                if set(indexed.index) != set(feature_names):
+                    raise ValueError(f"Incomplete feature-importance artifact for {name}")
+                importances[str(name)] = indexed.loc[feature_names].astype(float).to_numpy()
+    else:
+        predictions = model_predictions_for_plotting(
+            dataset_path, time_column=time_column, **split_kwargs
+        )
+        for name in ("decision_tree", "random_forest", "xgboost", "lightgbm"):
+            entry = predictions.get(name)
+            if entry and entry["model"] is not None and hasattr(entry["model"], "feature_importances_"):
+                importances[name] = np.asarray(entry["model"].feature_importances_)
     if not importances:
         return
 
     _ensure_dir(output_path)
-    n_features = len(FEATURES)
+    n_features = len(feature_names)
     y_pos = np.arange(n_features)
     n_models = len(importances)
     bar_height = 0.8 / n_models
@@ -689,14 +855,23 @@ def plot_feature_importance(
     for i, (name, values) in enumerate(importances.items()):
         offset = (i - (n_models - 1) / 2) * bar_height
         plt.barh(y_pos + offset, values, height=bar_height, label=name)
-    plt.yticks(y_pos, FEATURES)
+    plt.yticks(y_pos, feature_names)
     plt.gca().invert_yaxis()
     plt.xlabel("Feature importance (impurity/gain-based)")
     plt.title("Feature Importance: Tree-Based Models")
     plt.legend(loc="lower right")
     plt.grid(axis="x", alpha=0.3)
     plt.tight_layout()
-    _savefig(output_path, dpi=300)
+    _savefig(
+        output_path,
+        dpi=300,
+        source=(
+            _artifact_source("feature_importance", feature_importance_path)
+            if feature_importance_path is not None
+            else f"dataset={dataset_path}"
+        ),
+        config_summary="inner-train fitted tree models",
+    )
 
 
 def plot_threshold_sensitivity(
@@ -704,16 +879,24 @@ def plot_threshold_sensitivity(
     output_path: Path,
     current_threshold_km: float | None = None,
     time_column: str | None = None,
+    predictions_path: Path | None = None,
     **split_kwargs,
 ) -> None:
-    df = pd.read_csv(dataset_path, **_CSV_KWARGS)
-    if df.empty or "risk_label" not in df.columns:
-        return
-    try:
-        df = _split_data(df, time_column, **split_kwargs).test
-    except InsufficientGroupedSplitError:
-        return
-    y_true = df["risk_label"].astype(int)
+    if predictions_path is not None:
+        predictions = pd.read_csv(predictions_path, **_CSV_KWARGS)
+        df = predictions.loc[predictions["model"].eq("fixed_threshold")]
+        if df.empty or "min_distance_km" not in df.columns:
+            return
+        y_true = df["y_true"].astype(int)
+    else:
+        df = pd.read_csv(dataset_path, **_CSV_KWARGS)
+        if df.empty or "risk_label" not in df.columns:
+            return
+        try:
+            df = _split_data(df, time_column, **split_kwargs).test
+        except InsufficientGroupedSplitError:
+            return
+        y_true = df["risk_label"].astype(int)
     if y_true.nunique() < 2:
         return
 
@@ -746,7 +929,16 @@ def plot_threshold_sensitivity(
     plt.grid(True, alpha=0.3)
     plt.legend(loc="best")
     plt.tight_layout()
-    _savefig(output_path, dpi=300)
+    _savefig(
+        output_path,
+        dpi=300,
+        source=(
+            _artifact_source("predictions", predictions_path)
+            if predictions_path is not None
+            else f"dataset={dataset_path}"
+        ),
+        config_summary="frozen held-out fixed-distance threshold sensitivity",
+    )
 
 
 def create_publication_plots(
@@ -757,7 +949,22 @@ def create_publication_plots(
     train_time_fraction: float = 0.75,
     test_pair_fraction: float = 0.25,
     pair_seed: str = "iac26-pair-split-v1",
+    predictions_path: Path | None = None,
+    feature_importance_path: Path | None = None,
+    evaluation_manifest_path: Path | None = None,
 ) -> list[Path]:
+    if (
+        evaluation_manifest_path is None
+        or predictions_path is None
+        or feature_importance_path is None
+    ):
+        raise ValueError(
+            "publication plots require the frozen evaluation manifest, "
+            "predictions and feature-importance artifacts"
+        )
+    _validate_evaluation_artifacts(
+        evaluation_manifest_path, predictions_path, feature_importance_path
+    )
     outputs = [
         output_dir / "pub_pr_curves.png",
         output_dir / "pub_false_alarm_recall_curves.png",
@@ -770,17 +977,40 @@ def create_publication_plots(
         "test_pair_fraction": test_pair_fraction,
         "pair_seed": pair_seed,
     }
-    plot_pr_curves(dataset_path, outputs[0], time_column=time_column, **split_kwargs)
-    plot_false_alarm_recall_curves(
-        dataset_path, outputs[1], time_column=time_column, **split_kwargs
+    plot_pr_curves(
+        dataset_path,
+        outputs[0],
+        time_column=time_column,
+        predictions_path=predictions_path,
+        **split_kwargs,
     )
-    plot_confusion_matrices(dataset_path, outputs[2], time_column=time_column, **split_kwargs)
-    plot_feature_importance(dataset_path, outputs[3], time_column=time_column, **split_kwargs)
+    plot_false_alarm_recall_curves(
+        dataset_path,
+        outputs[1],
+        time_column=time_column,
+        predictions_path=predictions_path,
+        **split_kwargs,
+    )
+    plot_confusion_matrices(
+        dataset_path,
+        outputs[2],
+        time_column=time_column,
+        predictions_path=predictions_path,
+        **split_kwargs,
+    )
+    plot_feature_importance(
+        dataset_path,
+        outputs[3],
+        time_column=time_column,
+        feature_importance_path=feature_importance_path,
+        **split_kwargs,
+    )
     plot_threshold_sensitivity(
         dataset_path,
         outputs[4],
         current_threshold_km=current_threshold_km,
         time_column=time_column,
+        predictions_path=predictions_path,
         **split_kwargs,
     )
     return [path for path in outputs if path.exists()]

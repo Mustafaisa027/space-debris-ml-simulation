@@ -7,6 +7,8 @@ outputs/
 data/live_tles_*.txt
 data/test_*.txt
 data/tle_snapshots/
+/data/tle_snapshots_iac26_75_v1/
+/.claude/
 
 .pytest_cache/
 .mypy_cache/
@@ -17,3 +19,4 @@ Thumbs.db
 
 /cd
 /dir
+/tmp/

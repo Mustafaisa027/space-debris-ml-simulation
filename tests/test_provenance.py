@@ -27,6 +27,32 @@ def test_git_commit_hash_falls_back_to_unknown_on_failure(monkeypatch):
     assert provenance.git_commit_hash() == "unknown"
 
 
+def test_git_commit_full_hash_uses_unabbreviated_revision(monkeypatch):
+    full = "a" * 40
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, full + "\n", ""),
+    )
+
+    assert provenance.git_commit_full_hash() == full
+
+
+def test_git_worktree_state_records_dirty_flag_and_status_hash(monkeypatch):
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0], 0, " M src/example.py\n", ""
+        ),
+    )
+
+    state = provenance.git_worktree_state()
+
+    assert state["dirty"] is True
+    assert len(state["status_sha256"]) == 64
+
+
 def test_generated_utc_is_iso_with_z_suffix():
     stamp = provenance.generated_utc()
     assert stamp.endswith("Z")
