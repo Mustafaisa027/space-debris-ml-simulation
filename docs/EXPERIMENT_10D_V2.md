@@ -53,6 +53,12 @@ as confirmatory evidence.
   both pre-specified uncertainty gates.
 - Adaptability remains fail-closed unless all configured support, block,
   bootstrap, confidence-bound, p-value, and every-block direction gates pass.
+- The v2 outer split is frozen at 40% training time so the remaining future
+  interval can contain exactly ten complete 12-hour analysis blocks separated
+  by two-hour embargoes. Each eligible block requires both classes, at least
+  five positive pairs and positive support on its UTC day. The registered
+  bootstrap seed is 214764. The validator is experiment-versioned so legacy
+  v1's 50%/48-hour/114764 contract cannot silently override v2.
 - If class or temporal support is insufficient after ten days, the valid
   result is `not_enough_data`; thresholds and support gates are not relaxed.
 

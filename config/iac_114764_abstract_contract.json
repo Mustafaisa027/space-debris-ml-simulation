@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "paper_id": "114764",
+  "title": "Machine Learning-Based Simulation Approach for Assessing Space Debris Collision Risk in Low Earth Orbit",
+  "accepted_abstract_pdf_sha256": "3614ec0335acfe4fec6b8730c6775044a6bf77ef82865b036cd8182e97d5a05d",
+  "accepted_abstract_pages": 1,
+  "implementation_requirements": {
+    "open_source": true,
+    "region": "LEO",
+    "orbital_input": "TLE",
+    "propagator": "SGP4",
+    "dataset_fields": [
+      "min_distance_km",
+      "tca_utc",
+      "relative_velocity_km_s"
+    ],
+    "required_models": [
+      "logistic_regression",
+      "random_forest",
+      "svm",
+      "xgboost"
+    ],
+    "required_metrics": [
+      "precision",
+      "recall",
+      "f1"
+    ],
+    "classical_comparator": "fixed_threshold"
+  },
+  "empirical_claims": [
+    {
+      "claim_id": "reduced_false_alarm_rate",
+      "publication_gate": "false_alarm_reduction_supported",
+      "policy": "fail_closed_until_final_real_data"
+    },
+    {
+      "claim_id": "higher_adaptability",
+      "publication_gate": "statistical_adaptability_supported",
+      "policy": "fail_closed_until_final_real_data"
+    }
+  ],
+  "required_outputs": [
+    "open_source_simulation_code",
+    "comparative_analysis_infrastructure"
+  ],
+  "interpretation_limits": {
+    "probability_of_collision_claim": false,
+    "reason": "Public TLEs do not provide the covariance and hard-body information required for reliable Pc."
+  }
+}

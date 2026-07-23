@@ -793,38 +793,52 @@ def paired_pair_cluster_bootstrap(
 
 
 def _validate_frozen_adaptability_protocol(config: ExperimentConfig) -> None:
-    requirements = {
-        "train_time_fraction == 0.50": math.isclose(
-            config.train_time_fraction, 0.50, rel_tol=0.0, abs_tol=1e-12
-        ),
-        "adaptability_block_hours == 48": math.isclose(
-            config.adaptability_block_hours, 48.0, rel_tol=0.0, abs_tol=1e-12
-        ),
-        "adaptability_embargo_hours == 2": math.isclose(
-            config.adaptability_embargo_hours, 2.0, rel_tol=0.0, abs_tol=1e-12
-        ),
-        "adaptability_min_blocks >= 10": config.adaptability_min_blocks >= 10,
-        "adaptability_min_unique_objects >= 30": (
-            config.adaptability_min_unique_objects >= 30
-        ),
-        "adaptability_min_pairs >= 30": config.adaptability_min_pairs >= 30,
-        "adaptability_min_positive_pairs_per_block >= 5": (
-            config.adaptability_min_positive_pairs_per_block >= 5
-        ),
-        "adaptability_min_positive_days_per_block >= 2": (
-            config.adaptability_min_positive_days_per_block >= 2
-        ),
-        "adaptability_bootstrap_replicates >= 10000": (
-            config.adaptability_bootstrap_replicates >= 10000
-        ),
-        "confidence_level == 0.95": math.isclose(
-            config.confidence_level, 0.95, rel_tol=0.0, abs_tol=1e-12
-        ),
-        "min_valid_bootstrap_fraction >= 0.90": (
-            config.min_valid_bootstrap_fraction >= 0.90
-        ),
-        "bootstrap_seed == 114764": config.bootstrap_seed == 114764,
+    frozen_by_experiment = {
+        "iac26-leo-mixed-75-v1": {
+            "train_time_fraction": 0.50,
+            "adaptability_block_hours": 48.0,
+            "adaptability_embargo_hours": 2.0,
+            "adaptability_min_blocks": 10,
+            "adaptability_min_unique_objects": 30,
+            "adaptability_min_pairs": 30,
+            "adaptability_min_positive_pairs_per_block": 5,
+            "adaptability_min_positive_days_per_block": 2,
+            "adaptability_bootstrap_replicates": 10000,
+            "confidence_level": 0.95,
+            "min_valid_bootstrap_fraction": 0.90,
+            "bootstrap_seed": 114764,
+        },
+        "iac26-10d-v2": {
+            "train_time_fraction": 0.40,
+            "adaptability_block_hours": 12.0,
+            "adaptability_embargo_hours": 2.0,
+            "adaptability_min_blocks": 10,
+            "adaptability_min_unique_objects": 30,
+            "adaptability_min_pairs": 30,
+            "adaptability_min_positive_pairs_per_block": 5,
+            "adaptability_min_positive_days_per_block": 1,
+            "adaptability_bootstrap_replicates": 10000,
+            "confidence_level": 0.95,
+            "min_valid_bootstrap_fraction": 0.90,
+            "bootstrap_seed": 214764,
+        },
     }
+    frozen = frozen_by_experiment.get(config.experiment_id)
+    if frozen is None:
+        raise EvidenceGenerationError(
+            "Frozen adaptability protocol has no registered experiment_id="
+            f"{config.experiment_id!r}"
+        )
+    requirements = {}
+    for field, expected in frozen.items():
+        observed = getattr(config, field)
+        requirements[f"{field} == {expected}"] = (
+            math.isclose(
+                float(observed), float(expected), rel_tol=0.0, abs_tol=1e-12
+            )
+            if isinstance(expected, float)
+            else observed == expected
+        )
     failures = [name for name, passed in requirements.items() if not passed]
     if failures:
         raise EvidenceGenerationError(

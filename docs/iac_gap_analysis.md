@@ -5,6 +5,12 @@ scientific contract for the repository. Implementation coverage and empirical
 evidence are deliberately separated: having code for a method is not evidence
 that its result claim is true.
 
+The exact accepted one-page PDF is bound in
+`config/iac_114764_abstract_contract.json` by SHA-256. Regression tests require
+its TLE/SGP4, dataset-field, four-model, precision/recall/F1, fixed-threshold
+and fail-closed claim-gate requirements to remain connected to the active v2
+pipeline.
+
 ## Requirement-to-evidence matrix
 
 | Abstract requirement | Implementation | Evidence state |
@@ -30,7 +36,7 @@ been re-simulated and the strict pair-held-out future split contains both
 classes in train and test. Row count alone is not enough; positive events must
 span multiple snapshots and independent catalogue pairs. The configured gate
 requires 30/20 positive train/test rows, 10/5 positive train/test pairs, and
-5/3 positive train/test snapshots. The frozen half-open window contains 720
+5/3 positive train/test snapshots. The frozen half-open v2 window contains 120
 two-hour snapshot-time bins; at least 90% must be occupied and no gap may exceed
 six hours. The gap is measured from actual snapshot timestamps, including the
 window endpoints, rather than nominal bin indices. Publication evaluation also
@@ -95,7 +101,7 @@ the analysis to match the claim.
    false-alarm and recall non-inferiority gates; require at least five held-out
    day blocks and state that uncertainty remains conditional on the observed catalogue.
 8. Keep five-fold expanding-time CV descriptive. Run the separate frozen-future
-   adaptability protocol: ten eligible 48-hour blocks with two-hour embargo,
+   v2 adaptability protocol: ten eligible 12-hour blocks with two-hour embargo,
    30 objects, 30 pairs, 10,000 dyadic object x time-block bootstrap draws,
    one-sided 95% lower bound above zero, p < 0.05 and positive AP delta in every
    block. Revise the abstract unless this fail-closed inference passes.

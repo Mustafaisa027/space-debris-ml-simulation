@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import math
 from dataclasses import replace
 
 import numpy as np
@@ -17,6 +18,7 @@ from space_debris.evidence import (
     EvidenceGenerationError,
     _constant_velocity_cpa_score,
     adaptability_inference_from_predictions,
+    _validate_frozen_adaptability_protocol,
     calibrate_distance_baseline,
     canonical_report_from_evidence,
     generate_evaluation_evidence,
@@ -519,6 +521,71 @@ def test_adaptability_inference_rejects_weakened_claim_protocol():
             block_anchor_utc="2026-01-01T00:00:00Z",
             analysis_end_utc="2026-01-03T02:00:00Z",
         )
+
+
+def test_v2_adaptability_protocol_is_registered_before_collection():
+    config = load_experiment_config("config/experiment_10_days_v2.json")
+
+    _validate_frozen_adaptability_protocol(config)
+
+
+def test_complete_v2_window_can_supply_ten_frozen_adaptability_blocks():
+    config = load_experiment_config("config/experiment_10_days_v2.json")
+    start = pd.Timestamp(config.collection_start_utc)
+    end = pd.Timestamp(config.collection_end_utc)
+    expected_slots = int(
+        (end - start).total_seconds() / (config.poll_interval_hours * 3600.0)
+    )
+    cutoff_index = math.ceil(expected_slots * config.train_time_fraction)
+    cutoff = start + pd.Timedelta(hours=cutoff_index * config.poll_interval_hours)
+    anchor = cutoff + pd.Timedelta(hours=config.poll_interval_hours)
+    cycle_hours = (
+        config.adaptability_block_hours + config.adaptability_embargo_hours
+    )
+    complete_blocks = (
+        math.floor(
+            (
+                (end - anchor).total_seconds() / 3600.0
+                - config.adaptability_block_hours
+            )
+            / cycle_hours
+        )
+        + 1
+    )
+
+    assert expected_slots == 120
+    assert cutoff_index == 48
+    assert complete_blocks == config.adaptability_min_blocks == 10
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("train_time_fraction", 0.50),
+        ("adaptability_block_hours", 48.0),
+        ("adaptability_min_positive_days_per_block", 2),
+        ("bootstrap_seed", 114764),
+        ("adaptability_min_blocks", 9),
+    ],
+)
+def test_v2_adaptability_protocol_rejects_any_v1_or_weakened_value(field, value):
+    config = replace(
+        load_experiment_config("config/experiment_10_days_v2.json"),
+        **{field: value},
+    )
+
+    with pytest.raises(EvidenceGenerationError, match=f"{field} =="):
+        _validate_frozen_adaptability_protocol(config)
+
+
+def test_adaptability_protocol_rejects_unregistered_experiment_id():
+    config = replace(
+        load_experiment_config("config/experiment_10_days_v2.json"),
+        experiment_id="unregistered-follow-up",
+    )
+
+    with pytest.raises(EvidenceGenerationError, match="no registered experiment_id"):
+        _validate_frozen_adaptability_protocol(config)
 
 
 def test_adaptability_ignores_partial_final_cycle_and_requires_all_complete_blocks():
