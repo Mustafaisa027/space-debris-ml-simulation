@@ -88,3 +88,28 @@ def test_collection_workflow_creates_archive_parent_before_first_bundle():
         "github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'"
         in workflow
     )
+
+
+def test_cadence_workflow_checks_separate_data_archive():
+    workflow = Path(".github/workflows/collection_cadence_health.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "ref: data-collection" in workflow
+    assert "path: archive" in workflow
+    assert "src/collection_cadence_health.py ../archive" in workflow
+
+
+def test_finalizer_is_window_locked_and_orders_the_evidence_chain():
+    script = Path("scripts/finalize_iac_experiment.ps1").read_text(encoding="utf-8")
+    window_check = 'src\\collection_window_status.py'
+    archive_import = 'src\\import_collection_archive.py'
+    resimulation = 'src\\resimulate_snapshots.py'
+    training = 'src\\train_from_history.py'
+
+    assert '$window.status -ne "window_complete"' in script
+    assert "--workers `$Workers" not in script
+    assert "--workers $Workers" in script
+    assert script.index(window_check) < script.index(archive_import)
+    assert script.index(archive_import) < script.index(resimulation)
+    assert script.index(resimulation) < script.index(training)

@@ -123,6 +123,25 @@ the same bin count only once. Public repositories can also
 have scheduled workflows disabled after 60 days without repository activity;
 check the Actions page periodically.
 
+The separate **Check collection cadence health** workflow checks out both the
+default branch and `data-collection` every two hours. During the active window,
+it fails when the newest schema-2 manifest is more than the configured
+`max_snapshot_gap_hours` old. This failure is an early operational alert; it
+does not substitute manifest time for `snapshot_utc` in the scientific
+coverage calculation.
+
+After the window closes, use the resumable finalizer from the source checkout:
+
+```powershell
+.\scripts\finalize_iac_experiment.ps1 `
+  -ArchiveRoot ..\space-debris-data `
+  -Workers 4
+```
+
+It refuses pre-window finalization, imports only a clean committed archive,
+re-simulates immutable snapshots in parallel, and then runs the fail-closed
+training/publication entry point.
+
 ## Existing local archive
 
 The current local archive should be imported once under a distinct prefix such

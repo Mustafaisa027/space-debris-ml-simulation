@@ -117,11 +117,23 @@ python src/collect_observations.py --days 60 --interval-hours 2
 git fetch origin data-collection
 git worktree add ../space-debris-data origin/data-collection
 python src/import_collection_archive.py ../space-debris-data
-python src/resimulate_snapshots.py --config config/experiment_60_days.json
+python src/resimulate_snapshots.py --config config/experiment_60_days.json --workers 4
 
 # pair-held-out, time-ordered evaluation over corrected-TCA history
 python src/train_from_history.py
 ```
+
+After the frozen window closes, the same fail-closed sequence is available as
+one resumable PowerShell command:
+
+```powershell
+.\scripts\finalize_iac_experiment.ps1 -ArchiveRoot ..\space-debris-data -Workers 4
+```
+
+The finalizer refuses to run before the configured end time, requires a clean
+committed archive through the importer, reuses fingerprint-verified completed
+resimulations, and produces no publication claim unless every downstream
+quality and evidence gate passes.
 
 The training command defaults to the corrected frozen-cohort
 `conjunction_observations_resimulated_iac26_75_v1.csv`, not the live collector
@@ -198,6 +210,11 @@ For computer-independent, no-cloud-account collection, the repository includes
 a scheduled GitHub Actions workflow that commits immutable, hash-manifested
 bundles to a separate `data-collection` branch. Setup instructions are in
 [`docs/GITHUB_DATA_COLLECTION.md`](docs/GITHUB_DATA_COLLECTION.md).
+
+The companion cadence-health workflow checks the age of the newest schema-2
+bundle manifest every two hours and fails after the frozen six-hour gap limit.
+This is an operational alert only; publication coverage continues to use
+snapshot timestamps and the frozen 720-slot definition below.
 
 The final collection interval is frozen in the experiment config and anchored
 to the pre-specified `17 */2 * * *` UTC cron grid. Coverage is measured over 720

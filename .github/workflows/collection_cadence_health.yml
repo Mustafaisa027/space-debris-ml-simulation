@@ -1,0 +1,34 @@
+name: Check collection cadence health
+
+on:
+  schedule:
+    - cron: "47 */2 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  cadence-health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out experiment source
+        uses: actions/checkout@v4
+        with:
+          path: source
+
+      - name: Check out immutable data archive
+        uses: actions/checkout@v4
+        with:
+          ref: data-collection
+          path: archive
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify recent schema-2 bundle
+        working-directory: source
+        run: python src/collection_cadence_health.py ../archive --config config/experiment_60_days.json
