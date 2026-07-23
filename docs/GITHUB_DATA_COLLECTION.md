@@ -138,6 +138,14 @@ than the configured
 does not substitute manifest time for `snapshot_utc` in the scientific
 coverage calculation.
 
+The same job emits a separate `scientific_progress` object derived only from
+fully verified schema-3 bundles. During collection it reports total and
+currently-due slot coverage, endpoint-inclusive observed gap, unique TLE hash
+fraction, longest identical-hash run, and whether the frozen 90% final coverage
+is still mathematically reachable. At the window end these fields are checked
+against the same publication-window implementation in regression tests.
+Operational manifest liveness and scientific snapshot quality remain distinct.
+
 After the window closes, use the resumable finalizer from the source checkout:
 
 ```powershell
