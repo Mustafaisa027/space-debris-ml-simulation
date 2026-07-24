@@ -54,6 +54,22 @@ class EvidenceGenerationError(RuntimeError):
     """Raised when a publication comparison cannot be generated safely."""
 
 
+def _index_by_unique_row_id(frame: pd.DataFrame) -> pd.DataFrame:
+    """Index paired predictions by ``source_row_id`` with a fail-closed check.
+
+    Replaces the ``verify_integrity=True`` keyword (deprecated in pandas 3 and
+    slated for removal) while preserving its contract: a duplicated row id means
+    the prediction rows are not uniquely paired, which must raise rather than
+    silently produce an ambiguous alignment.
+    """
+    indexed = frame.set_index("source_row_id")
+    if not indexed.index.is_unique:
+        raise EvidenceGenerationError(
+            "Prediction rows are not uniquely keyed by source_row_id"
+        )
+    return indexed
+
+
 CALIBRATED_DISTANCE_BASELINE = "inner_calibrated_distance_threshold"
 INELIGIBLE_SUPPORT_CONTROLS = frozenset(
     {
@@ -376,7 +392,7 @@ def paired_pair_cluster_bootstrap(
         raise EvidenceGenerationError("Exactly one fixed-threshold prediction per test row is required")
     if primary_model not in set(predictions["model"]):
         raise EvidenceGenerationError(f"Primary model is missing from predictions: {primary_model}")
-    baseline = baseline.set_index("source_row_id", verify_integrity=True)
+    baseline = _index_by_unique_row_id(baseline)
     y_baseline = baseline["y_true"].astype(int).to_numpy()
     baseline_pred_values = baseline["pred"].astype(int).to_numpy()
     baseline_score_values = baseline["score"].astype(float).to_numpy()
@@ -387,9 +403,9 @@ def paired_pair_cluster_bootstrap(
     )
     calibrated_reference: pd.DataFrame | None = None
     if CALIBRATED_DISTANCE_BASELINE in set(predictions["model"]):
-        calibrated_reference = predictions.loc[
-            predictions["model"].eq(CALIBRATED_DISTANCE_BASELINE)
-        ].set_index("source_row_id", verify_integrity=True)
+        calibrated_reference = _index_by_unique_row_id(
+            predictions.loc[predictions["model"].eq(CALIBRATED_DISTANCE_BASELINE)]
+        )
         if set(calibrated_reference.index) != set(baseline.index):
             raise EvidenceGenerationError(
                 "Calibrated distance prediction rows are not paired with the fixed baseline"
@@ -426,9 +442,9 @@ def paired_pair_cluster_bootstrap(
     )
     cpa_reference: pd.DataFrame | None = None
     if "constant_velocity_cpa" in set(predictions["model"]):
-        cpa_reference = predictions.loc[
-            predictions["model"].eq("constant_velocity_cpa")
-        ].set_index("source_row_id", verify_integrity=True)
+        cpa_reference = _index_by_unique_row_id(
+            predictions.loc[predictions["model"].eq("constant_velocity_cpa")]
+        )
         if set(cpa_reference.index) != set(baseline.index):
             raise EvidenceGenerationError(
                 "Constant-velocity CPA prediction rows are not paired with the fixed baseline"
@@ -502,8 +518,8 @@ def paired_pair_cluster_bootstrap(
         )
 
     for model_name in sorted(set(predictions["model"]) - {"fixed_threshold"}):
-        model = predictions.loc[predictions["model"].eq(model_name)].set_index(
-            "source_row_id", verify_integrity=True
+        model = _index_by_unique_row_id(
+            predictions.loc[predictions["model"].eq(model_name)]
         )
         if set(model.index) != set(baseline.index):
             raise EvidenceGenerationError(f"Prediction rows are not paired for {model_name}")
@@ -898,8 +914,8 @@ def adaptability_inference_from_predictions(
         raise EvidenceGenerationError(
             "Adaptability inference requires one prediction per method and source row"
         )
-    primary = primary.set_index("source_row_id", verify_integrity=True)
-    baseline = baseline.set_index("source_row_id", verify_integrity=True)
+    primary = _index_by_unique_row_id(primary)
+    baseline = _index_by_unique_row_id(baseline)
     if set(primary.index) != set(baseline.index):
         raise EvidenceGenerationError(
             "Adaptability primary and baseline prediction rows are not paired"
