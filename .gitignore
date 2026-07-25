@@ -8,6 +8,9 @@ data/live_tles_*.txt
 data/test_*.txt
 data/tle_snapshots/
 /data/tle_snapshots_iac26_75_v1/
+# Imported/re-simulated experiment snapshots (v1/v2/v3/...) are regenerable
+# from the immutable data-collection archive and must never be committed here.
+/data/tle_snapshots_iac26_75_*/
 /.claude/
 
 .pytest_cache/

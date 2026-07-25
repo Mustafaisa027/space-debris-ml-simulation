@@ -1,8 +1,15 @@
 # IAC26 10-day v2 frozen protocol
 
+> **SUPERSEDED (retained as pilot).** On collection day 1, `iac26-10d-v2` was
+> re-anchored to `iac26-10d-v3` to exclude an initial TLE-feed cold-start that
+> permanently breached the frozen `max_identical_tle_hash_run_bins <= 6` gate.
+> The v2 archive is kept unmodified as pilot/audit data and is not pooled into
+> v3. The active claim-eligible protocol is now `docs/EXPERIMENT_10D_V3.md`.
+> The contract below is retained for the historical v2 record.
+
 ## Status and scientific boundary
 
-`iac26-10d-v2` is the active claim-eligible experiment. Its half-open
+`iac26-10d-v2` was the claim-eligible experiment before the v3 re-anchor. Its half-open
 collection window is 2026-07-24T00:17:00Z to 2026-08-03T00:17:00Z, with one
 nominal observation every two hours (120 slots). The accepted IAC abstract
 specifies TLE/SGP4 conjunction analysis, the four classifiers, and

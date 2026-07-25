@@ -10,7 +10,12 @@ from pathlib import Path
 
 
 DEFAULT_EXPERIMENT_CONFIG = Path("config/experiment_60_days.json")
-ACTIVE_EXPERIMENT_CONFIG = Path("config/experiment_10_days_v2.json")
+# Active claim-eligible experiment. v3 re-anchors v2's collection window to
+# exclude a day-0 TLE-feed cold-start (see config/experiment_10_days_v3.json).
+# v2 is retained as pilot/audit only and is intentionally no longer
+# claim-eligible, mirroring how the 60-day v1 archive became pilot for v2.
+ACTIVE_EXPERIMENT_CONFIG = Path("config/experiment_10_days_v3.json")
+PILOT_EXPERIMENT_CONFIG = Path("config/experiment_10_days_v2.json")
 CLAIM_ELIGIBLE_EXPERIMENT_CONFIGS = (
     DEFAULT_EXPERIMENT_CONFIG,
     ACTIVE_EXPERIMENT_CONFIG,

@@ -25,8 +25,8 @@ jobs:
     env:
       COLLECTION_ROOT: staging/collection
       DATA_BRANCH: data-collection
-      EXPERIMENT_CONFIG: config/experiment_10_days_v2.json
-      ARCHIVE_COLLECTIONS: experiments/iac26-10d-v2/collections
+      EXPERIMENT_CONFIG: config/experiment_10_days_v3.json
+      ARCHIVE_COLLECTIONS: experiments/iac26-10d-v3/collections
       SPACETRACK_IDENTITY: ${{ secrets.SPACETRACK_IDENTITY }}
       SPACETRACK_PASSWORD: ${{ secrets.SPACETRACK_PASSWORD }}
 
@@ -64,12 +64,12 @@ jobs:
             --provider auto \
             --snapshot-dir "$COLLECTION_ROOT/tle" \
             --run-root "$COLLECTION_ROOT/runs" \
-            --history "$COLLECTION_ROOT/history/conjunction_observations_iac26_75_v2.csv"
+            --history "$COLLECTION_ROOT/history/conjunction_observations_iac26_75_v3.csv"
 
       - name: Verify collection output
         if: steps.collection_slot.outputs.collect == 'true'
         run: |
-          test -s "$COLLECTION_ROOT/history/conjunction_observations_iac26_75_v2.csv"
+          test -s "$COLLECTION_ROOT/history/conjunction_observations_iac26_75_v3.csv"
           test "$(find "$COLLECTION_ROOT/tle" -type f -name '*.txt' | wc -l)" -ge 1
           test "$(find "$COLLECTION_ROOT/runs" -type f -name 'conjunction_dataset.csv' | wc -l)" -ge 1
 
