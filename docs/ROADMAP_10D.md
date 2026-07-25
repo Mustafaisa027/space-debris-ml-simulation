@@ -1,8 +1,14 @@
 # 10 Günlük Yol Haritası — IAC 114764 Bildirisine Giden Yol
 
-**Toplama penceresi:** `2026-07-24T00:17:00Z → 2026-08-03T00:17:00Z` (bugün açıldı)
-**Deney:** `iac26-10d-v2`, 2 saatlik cadence, 120 slot, 75 NORAD ID (`iac26-leo-mixed-75-v2`)
+**Toplama penceresi:** `2026-07-26T00:17:00Z → 2026-08-05T00:17:00Z`
+**Deney:** `iac26-10d-v3`, 2 saatlik cadence, 120 slot, 75 NORAD ID (`iac26-leo-mixed-75-v2`)
 **Kritik yol:** Gerçek TLE toplama = tek darboğaz. Kod hazır; kısaltılamaz.
+
+> **v3 re-anchor notu:** İlk pencere (v2, 24 Tem açıldı) bir TLE-feed cold-start'ına
+> denk geldi (9 ardışık bin aynı katalog → frozen `≤6` kapısını kalıcı ihlal).
+> Gün 1'de, sonuç görülmeden, pencere 26 Tem'e çıpalandı; v2 arşivi pilot kalır.
+> Detay: `docs/EXPERIMENT_10D_V3.md`. **v3 workflow'u `main`'e 26 Tem 00:17Z'den
+> önce push edilmeli** ki toplama zamanında başlasın.
 
 Bu yol haritası, bağlamdan kopmadan "veri topla → kanıt üret → makale yaz"
 akışını üç paralel şeride ayırır: **(A) Toplama & izleme**, **(B) Kod & kanıt
@@ -22,7 +28,7 @@ Pencere bugün açıldı. Kaybedilen her slot geri gelmez. **Şunları doğrula:
 2. **Cron tetikleniyor mu?** Actions sekmesinde `:17` ve `:47` işlerinin
    çalıştığını gör. İlk birkaç saat içinde en az bir yeşil çalıştırma olmalı.
 3. **`data-collection` dalı oluştu mu?** İlk başarılı toplama, `data-collection`
-   dalı altına `experiments/iac26-10d-v2/collections/github-run-*` bundle'ı
+   dalı altına `experiments/iac26-10d-v3/collections/github-run-*` bundle'ı
    push etmeli.
 4. **(Opsiyonel) Space-Track fallback:** `SPACETRACK_IDENTITY` /
    `SPACETRACK_PASSWORD` repo secret'ları tanımlıysa CelesTrak kesintilerinde
@@ -43,11 +49,11 @@ git -C ..\sd-archive pull
 
 # Pencere doluluk durumu (kaç slot doldu, boşluk var mı):
 .venv\Scripts\python.exe src\collection_window_status.py `
-    --config config\experiment_10_days_v2.json
+    --config config\experiment_10_days_v3.json
 
 # Cadence sağlığı (6 saatten büyük boşluk, bayat-hash run'ı var mı):
 .venv\Scripts\python.exe src\collection_cadence_health.py `
-    ..\sd-archive --config config\experiment_10_days_v2.json
+    ..\sd-archive --config config\experiment_10_days_v3.json
 ```
 
 **Neye bak:**

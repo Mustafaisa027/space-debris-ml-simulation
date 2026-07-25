@@ -1,10 +1,12 @@
 # GitHub Actions data collection
 
-> Active protocol: `iac26-10d-v2`, 2026-07-24T00:17:00Z through
-> 2026-08-03T00:17:00Z. Bundles use manifest schema 3 and are stored beneath
-> `experiments/iac26-10d-v2/collections/`. The older root-level
-> `collections/` tree is the isolated v1 pilot archive and is never imported
-> into v2. See `docs/EXPERIMENT_10D_V2.md` for the frozen scientific contract.
+> Active protocol: `iac26-10d-v3`, 2026-07-26T00:17:00Z through
+> 2026-08-05T00:17:00Z. Bundles use manifest schema 3 and are stored beneath
+> `experiments/iac26-10d-v3/collections/`. The older root-level
+> `collections/` tree is the isolated v1 pilot archive, and the
+> `experiments/iac26-10d-v2/collections/` tree is the v2 pilot archive; neither
+> is imported into v3. See `docs/EXPERIMENT_10D_V3.md` for the frozen scientific
+> contract and why v2 was re-anchored to v3.
 
 `.github/workflows/collect_observations.yml` offers delivery opportunities at
 minutes `17` and `47` of every UTC hour. An archive-backed slot guard permits
@@ -19,9 +21,9 @@ source-code history on `main`.
 Each workflow execution gets an immutable directory:
 
 ```text
-experiments/iac26-10d-v2/collections/github-run-RUN_ID-attempt-ATTEMPT/
+experiments/iac26-10d-v3/collections/github-run-RUN_ID-attempt-ATTEMPT/
   experiment/config.json
-  history/conjunction_observations_iac26_75_v2.csv
+  history/conjunction_observations_iac26_75_v3.csv
   runs/TIMESTAMP/conjunction_dataset.csv
   runs/TIMESTAMP/identified_conjunctions.csv
   tle/tles_TIMESTAMP.txt
@@ -36,16 +38,16 @@ exact Python, platform and installed-package versions used by that numerical
 run. The workflow verifies that TLE, history, and simulation outputs exist
 before publishing anything.
 
-Every claim-eligible v2 bundle uses manifest schema 3. Manifest generation
+Every claim-eligible v3 bundle uses manifest schema 3. Manifest generation
 fails closed unless a valid `environment/runtime.json` and the exact embedded
 experiment config are present. The manifest binds the experiment ID, canonical
 config SHA-256, catalogue, simulation settings, source commit, runtime and
 every payload byte. Schema 1/2 acceptance exists only in the isolated v1
-compatibility path; the v2 workflow never produces or imports those schemas.
+compatibility path; the v3 workflow never produces or imports those schemas.
 
 The retained first three v1 bundles contain the same TLE text SHA-256. They are
 pilot/audit artifacts, not three independent orbital-element updates and not
-members of the v2 cohort. The v2 scientific-progress report records both
+members of the v3 cohort. The v3 scientific-progress report records both
 occupied bins and unique TLE-input hashes instead of treating raw snapshot
 count as information diversity.
 
@@ -61,8 +63,8 @@ Check out the generated branch into a separate worktree and run the importer:
 ```powershell
 git fetch origin data-collection
 git worktree add ..\space-debris-data origin/data-collection
-python src/import_collection_archive.py ..\space-debris-data --config config/experiment_10_days_v2.json
-python src/resimulate_snapshots.py --config config/experiment_10_days_v2.json --workers 4
+python src/import_collection_archive.py ..\space-debris-data --config config/experiment_10_days_v3.json
+python src/resimulate_snapshots.py --config config/experiment_10_days_v3.json --workers 4
 ```
 
 The importer first requires the archive path to be the root of a clean Git
@@ -70,7 +72,7 @@ checkout/worktree and records its exact HEAD revision. It then recomputes every
 manifest size/hash, rejects unlisted files, unsafe paths, partial/wrong
 catalogue cohorts and duplicate collection IDs, then atomically copies only
 TLE and per-run simulation artifacts into the flat canonical paths from
-`experiment_10_days_v2.json`. Existing byte-identical files are an idempotent
+`experiment_10_days_v3.json`. Existing byte-identical files are an idempotent
 no-op; a same-name/different-content collision aborts before new files are
 copied. Per-bundle live history files are not concatenated: the publication
 history is rebuilt from corrected-TCA re-simulation. Before claim-eligible
@@ -85,8 +87,8 @@ be mixed into the final model history. The authoritative collector requires
 the complete frozen 75-object cohort.
 
 The canonical half-open window is frozen in
-`config/experiment_10_days_v2.json` as `2026-07-24T00:17:00Z` through
-`2026-08-03T00:17:00Z`. Scheduled invocations outside that window exit
+`config/experiment_10_days_v3.json` as `2026-07-26T00:17:00Z` through
+`2026-08-05T00:17:00Z`. Scheduled invocations outside that window exit
 successfully without fetching or publishing data. Evaluation counts occupied
 two-hour cadence slots (so retries do not inflate coverage), requires at least
 108 of 120 slots, rejects an endpoint-inclusive actual snapshot-time gap above
@@ -121,8 +123,8 @@ Do not weaken protection on `main`.
 
 GitHub scheduled workflows can be delayed under load. Each bundle's recorded
 `snapshot_utc` is authoritative for the physical observation. Coverage divides
-the frozen interval into half-open two-hour bins anchored at the configured v2
-start, `2026-07-24T00:17:00Z`; a delayed
+the frozen interval into half-open two-hour bins anchored at the configured v3
+start, `2026-07-26T00:17:00Z`; a delayed
 run stays in the bin where the observation actually occurred, and retries in
 the same bin count only once. Public repositories can also
 have scheduled workflows disabled after 60 days without repository activity;

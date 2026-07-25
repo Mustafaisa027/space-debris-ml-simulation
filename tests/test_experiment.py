@@ -260,6 +260,44 @@ def test_repository_v2_config_is_pre_registered_and_isolated():
     assert config.min_tle_hash_diversity_fraction == 0.30
 
 
+def test_repository_v3_config_is_active_and_frozen_protocol_consistent():
+    """v3 re-anchors v2's window; guard against a day-10 finalization surprise.
+
+    Pins that (a) v3 is the wired ACTIVE claim-eligible config, (b) its window
+    excludes the day-0 cold-start, (c) it reuses the v2 catalogue byte-for-byte,
+    and (d) its evaluation fields match the frozen adaptability protocol
+    registered in evidence.py -- an inconsistency here would only surface as a
+    fail-closed error at finalization, which this catches now.
+    """
+    from space_debris.experiment import ACTIVE_EXPERIMENT_CONFIG
+    from space_debris.evidence import _validate_frozen_adaptability_protocol
+
+    assert ACTIVE_EXPERIMENT_CONFIG.name == "experiment_10_days_v3.json"
+
+    v3 = load_experiment_config("config/experiment_10_days_v3.json")
+    v2 = load_experiment_config("config/experiment_10_days_v2.json")
+
+    assert v3.experiment_id == "iac26-10d-v3"
+    assert v3.duration_days == 10
+    assert v3.collection_start_utc == "2026-07-26T00:17:00Z"
+    assert v3.collection_end_utc == "2026-08-05T00:17:00Z"
+    assert v3.archive_collections == "experiments/iac26-10d-v3/collections"
+    assert v3.snapshot_dir.endswith("tle_snapshots_iac26_75_v3")
+    assert v3.history.endswith("_iac26_75_v3.csv")
+
+    # Same catalogue as v2 (only the experiment wrapper changed).
+    assert v3.catalog_version == "iac26-leo-mixed-75-v2"
+    assert v3.catalog_sha256 == v2.catalog_sha256
+
+    # Every frozen gate/seed/threshold is identical to v2.
+    assert v3.train_time_fraction == v2.train_time_fraction
+    assert v3.min_tle_hash_diversity_fraction == v2.min_tle_hash_diversity_fraction
+    assert v3.max_identical_tle_hash_run_bins == v2.max_identical_tle_hash_run_bins
+
+    # config <-> evidence.py frozen protocol must agree, or finalization fails closed.
+    _validate_frozen_adaptability_protocol(v3)
+
+
 def test_experiment_config_rejects_unsafe_archive_collection_path(tmp_path):
     raw = _config()
     raw["outputs"]["archive_collections"] = "../collections"

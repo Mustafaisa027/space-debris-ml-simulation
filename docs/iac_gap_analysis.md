@@ -8,7 +8,7 @@ that its result claim is true.
 The exact accepted one-page PDF is bound in
 `config/iac_114764_abstract_contract.json` by SHA-256. Regression tests require
 its TLE/SGP4, dataset-field, four-model, precision/recall/F1, fixed-threshold
-and fail-closed claim-gate requirements to remain connected to the active v2
+and fail-closed claim-gate requirements to remain connected to the active v3
 pipeline.
 
 ## Requirement-to-evidence matrix
@@ -27,8 +27,10 @@ pipeline.
 
 ## Current empirical gate
 
-The active canonical experiment is the pre-registered 10-day v2 protocol at a
-two-hour collection cadence. The earlier 60-day v1 archive is pilot/audit
+The active canonical experiment is the pre-registered 10-day v3 protocol at a
+two-hour collection cadence. v3 re-anchors v2's collection window on day 1 to
+exclude an initial TLE-feed cold-start, and v2 is retained unmodified as
+pilot/audit data. The earlier 60-day v1 archive is likewise pilot/audit
 evidence and is not pooled because its hardened eligible-bundle ceiling makes
 its frozen 90% gate unattainable. A final
 model claim is permitted only after the corrected historical snapshots have
@@ -36,7 +38,7 @@ been re-simulated and the strict pair-held-out future split contains both
 classes in train and test. Row count alone is not enough; positive events must
 span multiple snapshots and independent catalogue pairs. The configured gate
 requires 30/20 positive train/test rows, 10/5 positive train/test pairs, and
-5/3 positive train/test snapshots. The frozen half-open v2 window contains 120
+5/3 positive train/test snapshots. The frozen half-open v3 window contains 120
 two-hour snapshot-time bins; at least 90% must be occupied and no gap may exceed
 six hours. The gap is measured from actual snapshot timestamps, including the
 window endpoints, rather than nominal bin indices. Publication evaluation also
@@ -81,7 +83,7 @@ the analysis to match the claim.
 
 ## Remaining work before submission
 
-1. Complete the 10-day v2 immutable snapshot collection and corrected-TCA
+1. Complete the 10-day v3 immutable snapshot collection and corrected-TCA
    historical re-simulation.
 2. Import the GitHub archive through manifest/hash verification, re-simulate,
    and publish the generated frozen pair/time split manifest.
@@ -101,7 +103,7 @@ the analysis to match the claim.
    false-alarm and recall non-inferiority gates; require at least five held-out
    day blocks and state that uncertainty remains conditional on the observed catalogue.
 8. Keep five-fold expanding-time CV descriptive. Run the separate frozen-future
-   v2 adaptability protocol: ten eligible 12-hour blocks with two-hour embargo,
+   v3 adaptability protocol: ten eligible 12-hour blocks with two-hour embargo,
    30 objects, 30 pairs, 10,000 dyadic object x time-block bootstrap draws,
    one-sided 95% lower bound above zero, p < 0.05 and positive AP delta in every
    block. Revise the abstract unless this fail-closed inference passes.

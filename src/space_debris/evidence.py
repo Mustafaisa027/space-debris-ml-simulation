@@ -838,6 +838,22 @@ def _validate_frozen_adaptability_protocol(config: ExperimentConfig) -> None:
             "min_valid_bootstrap_fraction": 0.90,
             "bootstrap_seed": 214764,
         },
+        # v3 re-anchors v2's collection window only; every frozen adaptability
+        # parameter below is identical to v2 (see config/experiment_10_days_v3.json).
+        "iac26-10d-v3": {
+            "train_time_fraction": 0.40,
+            "adaptability_block_hours": 12.0,
+            "adaptability_embargo_hours": 2.0,
+            "adaptability_min_blocks": 10,
+            "adaptability_min_unique_objects": 30,
+            "adaptability_min_pairs": 30,
+            "adaptability_min_positive_pairs_per_block": 5,
+            "adaptability_min_positive_days_per_block": 1,
+            "adaptability_bootstrap_replicates": 10000,
+            "confidence_level": 0.95,
+            "min_valid_bootstrap_fraction": 0.90,
+            "bootstrap_seed": 214764,
+        },
     }
     frozen = frozen_by_experiment.get(config.experiment_id)
     if frozen is None:

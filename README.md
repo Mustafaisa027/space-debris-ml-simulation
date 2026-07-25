@@ -98,16 +98,20 @@ reproduce the active 10-day frozen-cohort protocol or its chronological
 train/test split; use these commands to exercise the pipeline against live
 data, not to reproduce the paper's headline result.
 
-## Active claim-eligible experiment (10-day v2)
+## Active claim-eligible experiment (10-day v3)
 
-The active frozen protocol is `iac26-10d-v2`, running from
-2026-07-24T00:17:00Z through 2026-08-03T00:17:00Z. It contains 120 half-open
+The active frozen protocol is `iac26-10d-v3`, running from
+2026-07-26T00:17:00Z through 2026-08-05T00:17:00Z. It contains 120 half-open
 two-hour slots, requires 90% coverage, and stores schema-3 bundles under
-`experiments/iac26-10d-v2/collections/`. Exact experiment/config/catalogue and
-simulation bindings are verified before import. The earlier 60-day v1 archive
-is pilot evidence only: its hardened eligible-bundle ceiling makes its frozen
-90% gate unattainable, so v1 is never pooled into v2 or used for a publication
-claim. See [`docs/EXPERIMENT_10D_V2.md`](docs/EXPERIMENT_10D_V2.md).
+`experiments/iac26-10d-v3/collections/`. Exact experiment/config/catalogue and
+simulation bindings are verified before import. v3 re-anchors the earlier
+`iac26-10d-v2` window (opened 2026-07-24) on collection day 1 to exclude an
+initial TLE-feed cold-start that permanently breached the frozen
+`max_identical_tle_hash_run_bins <= 6` gate; the catalogue, seeds, and every
+quality gate are otherwise identical to v2. The 60-day v1 and the 10-day v2
+archives are both retained as pilot/audit evidence only and are never pooled
+into v3 or used for a publication claim. See
+[`docs/EXPERIMENT_10D_V3.md`](docs/EXPERIMENT_10D_V3.md).
 
 A single snapshot yields very few conjunctions, so no classifier can reliably
 beat the fixed-distance baseline on it — that is a statistical fact, not a code
@@ -119,17 +123,17 @@ collector enforces this as a floor.
 # one cycle
 python src/collect_observations.py --once
 
-# one active-v2 cycle (normally GitHub Actions performs this)
-python src/collect_observations.py --once --config config/experiment_10_days_v2.json
+# one active-v3 cycle (normally GitHub Actions performs this)
+python src/collect_observations.py --once --config config/experiment_10_days_v3.json
 
 # verify/import the GitHub archive, then rebuild corrected-TCA history
 git fetch origin data-collection
 git worktree add ../space-debris-data origin/data-collection
-python src/import_collection_archive.py ../space-debris-data --config config/experiment_10_days_v2.json
-python src/resimulate_snapshots.py --config config/experiment_10_days_v2.json --workers 4
+python src/import_collection_archive.py ../space-debris-data --config config/experiment_10_days_v3.json
+python src/resimulate_snapshots.py --config config/experiment_10_days_v3.json --workers 4
 
 # pair-held-out, time-ordered evaluation over corrected-TCA history
-python src/train_from_history.py --config config/experiment_10_days_v2.json
+python src/train_from_history.py --config config/experiment_10_days_v3.json
 ```
 
 After the frozen window closes, the same fail-closed sequence is available as
@@ -237,9 +241,10 @@ occupied bins must have distinct TLE hashes, and an identical-hash run may not
 exceed six bins. The diversity threshold was frozen from the v1 pilot before
 v2 collection and is not outcome-tuned.
 
-`config/experiment_10_days_v2.json` is authoritative for active collection,
+`config/experiment_10_days_v3.json` is authoritative for active collection,
 simulation thresholds, the `iac26-leo-mixed-75-v2` cohort, and report paths.
-`experiment_60_days.json` remains immutable for v1 audit replay.
+`config/experiment_10_days_v2.json` (pilot) and `experiment_60_days.json`
+remain immutable for v2/v1 audit replay.
 Exploratory tools may accept alternate configs, but the claim-eligible
 `train_from_history.py` rejects every unregistered config path. Changing
 the frozen protocol requires a new versioned experiment and collection window;
@@ -251,7 +256,7 @@ Therefore `.github/workflows/collect_observations.yml` must be merged into
 `main` before the two-hour collector can start automatically. After merging,
 enable Actions if necessary, trigger one manual smoke run, and verify that the
 `data-collection` branch receives a new immutable
-`experiments/iac26-10d-v2/collections/github-run-*` bundle. Keeping the
+`experiments/iac26-10d-v3/collections/github-run-*` bundle. Keeping the
 workflow only on a feature branch does not start the experiment.
 
 `train_from_history.py` assigns canonical object pairs deterministically with
