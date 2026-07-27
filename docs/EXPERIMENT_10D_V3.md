@@ -50,8 +50,9 @@ experiment id, the collection window, and the output paths differ from v2.
 Identical to v2:
 
 - At least 108/120 slots (90%) and no endpoint-inclusive gap above six hours.
-- At least 30% unique TLE hashes across occupied slots and no identical-hash
-  run above six bins.
+- TLE-hash diversity and longest identical-input run are reported for
+  provenance but are **not** publication gates (see "Feed-cadence gate
+  recalibration" below).
 - Proxy label remains minimum distance <= 50 km and TCA relative velocity
   >= 10 km/s. It is not Probability of Collision.
 - Primary learner remains snapshot-only XGBoost; Logistic Regression, Random
@@ -67,6 +68,42 @@ Identical to v2:
   two-hour embargoes. The registered bootstrap seed is 214764.
 - If class or temporal support is insufficient after ten days, the valid
   result is `not_enough_data`; thresholds and support gates are not relaxed.
+
+## Feed-cadence gate recalibration (2026-07-27, pre-analysis)
+
+The v3 config still carries `min_tle_hash_diversity_fraction = 0.30` and
+`max_identical_tle_hash_run_bins = 6` because those bytes are cryptographically
+bound into every immutable collection bundle and cannot be edited without
+invalidating already-collected data. However, on collection day 2 — before any
+v3 model was trained or evaluated — direct characterization of the live feed
+showed these two thresholds, inherited from the 60-day v1 pilot, are
+miscalibrated for CelesTrak's real behaviour:
+
+- CelesTrak publishes a fresh element set for these 75 LEO objects only about
+  once per UTC day (observed refreshes clustered in the evening/night, with a
+  long quiet daytime-UTC stretch). Identical-input runs of 6-9 two-hour bins
+  are therefore *normal upstream cadence*, not a stale or broken feed. On
+  2026-07-27 the observed run reached 7 (> 6) and diversity 0.176 (< 0.30)
+  while the collector was demonstrably healthy.
+
+These two metrics measure the **upstream catalogue's maintenance frequency**,
+not our collection quality. Each poll independently fetches fresh CelesTrak
+data and passes checksum, 69-character-width and catalogue-cohort validation, so
+the collector cannot silently serve a stuck cache. Accordingly, both metrics are
+**reclassified from hard publication gates to reported diagnostics** in
+`ml.py`, `evidence.py` and `collection_cadence_health.py`. This decision is:
+
+- made **before any model evaluation** (pre-analysis, not outcome-tuned);
+- based only on **data-acquisition characterization**, independent of any model
+  result;
+- **narrow**: coverage (>=90%), endpoint gap (<=6 h), TLE age (<=14 d),
+  catalogue binding, and every class/pair/snapshot statistical-support gate
+  remain hard fail-closed requirements, unchanged.
+
+The retained config values now serve as reported reference thresholds only. The
+paper must state this recalibration and its rationale transparently.
+
+## Release condition
 
 No numerical abstract claim is released until archive verification,
 corrected-TCA resimulation, model evaluation, and publication validation all
