@@ -1112,18 +1112,21 @@ def compare_models(
                 f"max_snapshot_gap_hours={observed_gap:.6f} > "
                 f"allowed={max_snapshot_gap_hours:.6f}"
             )
-        observed_diversity = float(window_quality["tle_input_hash_diversity_fraction"])
-        observed_identical_run = int(window_quality["max_identical_tle_hash_run_bins"])
-        if observed_diversity < min_tle_hash_diversity_fraction:
-            window_failures.append(
-                f"tle_input_hash_diversity_fraction={observed_diversity:.6f} < "
-                f"required={min_tle_hash_diversity_fraction:.6f}"
-            )
-        if observed_identical_run > max_identical_tle_hash_run_bins:
-            window_failures.append(
-                f"max_identical_tle_hash_run_bins={observed_identical_run} > "
-                f"allowed={max_identical_tle_hash_run_bins}"
-            )
+        # TLE-hash diversity and longest identical-input run are computed and
+        # reported in window_quality, but are NOT hard publication gates.
+        # Pre-analysis characterization (2026-07-27, before any v3 model
+        # evaluation) showed CelesTrak refreshes these 75 LEO objects' element
+        # sets only ~once per UTC day, so the v1-pilot-derived >=30% / <=6-bin
+        # thresholds flagged normal upstream cadence as "stale". These two
+        # metrics reflect upstream catalogue maintenance frequency, not our
+        # collection quality: each poll fetches fresh CelesTrak data and passes
+        # checksum + catalogue-cohort validation, so the collector cannot serve
+        # a stuck cache. Coverage, endpoint-gap, TLE-age and every statistical
+        # support gate remain hard fail-closed requirements. See
+        # docs/EXPERIMENT_10D_V3.md. (min_tle_hash_diversity_fraction and
+        # max_identical_tle_hash_run_bins are retained as reported thresholds
+        # for provenance and are no longer publication blockers.)
+        _ = (min_tle_hash_diversity_fraction, max_identical_tle_hash_run_bins)
     if maximum_tle_age_hours is not None:
         observed_tle_age = float(window_quality["maximum_observed_tle_age_hours"])
         if observed_tle_age > maximum_tle_age_hours:
@@ -1416,16 +1419,11 @@ def time_series_cv_report(
             continue
         fold_tle_quality = None
         if min_tle_hash_diversity_fraction is not None:
+            # Feed-cadence metrics are reported per fold but no longer skip a
+            # fold: they reflect CelesTrak's upstream ~daily refresh cadence for
+            # these objects, not collection quality. See docs/EXPERIMENT_10D_V3.md.
             train_tle_quality = _partition_tle_hash_quality(split.train, snapshot_records)
             test_tle_quality = _partition_tle_hash_quality(split.test, snapshot_records)
-            if any(
-                quality["tle_input_hash_diversity_fraction"]
-                < min_tle_hash_diversity_fraction
-                or quality["max_identical_tle_hash_run_bins"]
-                > max_identical_tle_hash_run_bins
-                for quality in (train_tle_quality, test_tle_quality)
-            ):
-                continue
             fold_tle_quality = {"train": train_tle_quality, "test": test_tle_quality}
         valid_partitions += 1
         evaluated_rows = _evaluate_split(

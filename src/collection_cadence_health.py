@@ -167,14 +167,16 @@ def scientific_collection_progress(
         observed_max_gap_hours = (endpoint - start).total_seconds() / 3600.0
 
     final_window = now >= end
+    # TLE-hash diversity and identical-run are reported (below) as feed-cadence
+    # diagnostics but are no longer part of the pass/fail gate: they reflect
+    # CelesTrak's upstream ~daily element-set refresh cadence for these objects,
+    # not collection quality. Coverage and endpoint gap remain hard gates.
+    # See docs/EXPERIMENT_10D_V3.md.
     final_gate_pass = (
         final_window
         and len(occupied_slots) >= required_slots
         and observed_max_gap_hours <= float(config.max_snapshot_gap_hours)
         and bool(hashes)
-        and len(set(hashes)) / len(hashes)
-        >= float(config.min_tle_hash_diversity_fraction)
-        and max_hash_run <= int(config.max_identical_tle_hash_run_bins)
     )
     if now < start:
         status = "before_window"

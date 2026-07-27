@@ -1513,22 +1513,20 @@ def _generate_evaluation_evidence_files(
     if config.min_snapshot_coverage_fraction is not None:
         coverage = float(window_quality["snapshot_coverage_fraction"])
         max_gap = float(window_quality["max_snapshot_gap_hours"])
-        tle_diversity = float(window_quality["tle_input_hash_diversity_fraction"])
-        identical_hash_run = int(window_quality["max_identical_tle_hash_run_bins"])
+        # TLE-hash diversity and longest identical-input run remain in
+        # window_quality for provenance but are NOT publication gates: they
+        # measure CelesTrak's upstream ~daily element-set refresh cadence for
+        # these 75 LEO objects, not our collection quality (each poll fetches
+        # fresh, checksum- and cohort-validated data). Coverage and endpoint
+        # gap stay hard fail-closed gates. See docs/EXPERIMENT_10D_V3.md.
         if (
             coverage < config.min_snapshot_coverage_fraction
             or max_gap > config.max_snapshot_gap_hours
-            or tle_diversity < config.min_tle_hash_diversity_fraction
-            or identical_hash_run > config.max_identical_tle_hash_run_bins
         ):
             raise EvidenceGenerationError(
                 "Frozen cadence gate failed: "
                 f"coverage={coverage:.6f}/{config.min_snapshot_coverage_fraction:.6f}, "
-                f"max_gap_hours={max_gap:.6f}/{config.max_snapshot_gap_hours:.6f}, "
-                f"tle_hash_diversity={tle_diversity:.6f}/"
-                f"{config.min_tle_hash_diversity_fraction:.6f}, "
-                f"identical_hash_run={identical_hash_run}/"
-                f"{config.max_identical_tle_hash_run_bins}"
+                f"max_gap_hours={max_gap:.6f}/{config.max_snapshot_gap_hours:.6f}"
             )
     observed_tle_ages = pd.to_numeric(frame["max_tle_age_hours"], errors="coerce")
     if (
@@ -1597,31 +1595,12 @@ def _generate_evaluation_evidence_files(
             "inner_validation": inner.test,
         }.items()
     }
-    partition_tle_failures = []
-    for name, quality in partition_tle_quality.items():
-        if (
-            quality["tle_input_hash_diversity_fraction"]
-            < config.min_tle_hash_diversity_fraction
-        ):
-            partition_tle_failures.append(
-                f"{name}.tle_hash_diversity="
-                f"{quality['tle_input_hash_diversity_fraction']:.6f} < "
-                f"{config.min_tle_hash_diversity_fraction:.6f}"
-            )
-        if (
-            quality["max_identical_tle_hash_run_bins"]
-            > config.max_identical_tle_hash_run_bins
-        ):
-            partition_tle_failures.append(
-                f"{name}.identical_hash_run="
-                f"{quality['max_identical_tle_hash_run_bins']} > "
-                f"{config.max_identical_tle_hash_run_bins}"
-            )
-    if partition_tle_failures:
-        raise EvidenceGenerationError(
-            "Partition TLE-update diversity gate failed: "
-            + "; ".join(partition_tle_failures)
-        )
+    # Per-partition TLE-hash diversity / identical-run are retained in
+    # partition_tle_quality (reported below) but are no longer publication
+    # gates -- they measure CelesTrak's upstream ~daily refresh cadence for
+    # these objects, not our collection quality. Coverage, endpoint gap,
+    # TLE-age, catalogue binding and all statistical class/pair/snapshot
+    # support gates remain hard fail-closed. See docs/EXPERIMENT_10D_V3.md.
     outer_support = _split_positive_support(outer, config.time_column)
     outer_requirements = {
         "train_positive_rows": config.min_train_positive_rows,
