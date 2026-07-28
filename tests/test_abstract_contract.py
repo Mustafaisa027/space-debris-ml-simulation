@@ -74,7 +74,7 @@ def test_operator_documentation_matches_active_v3_contract():
     readme = Path("README.md").read_text(encoding="utf-8")
 
     for required_text in (
-        "minutes `17` and `47` of every UTC hour",
+        "minutes `07`, `17`, `37` and `47` of every UTC hour",
         "manifest schema 3",
         "config/experiment_10_days_v3.json",
         "2026-07-26T00:17:00Z",

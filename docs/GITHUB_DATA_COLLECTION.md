@@ -9,10 +9,12 @@
 > contract and why v2 was re-anchored to v3.
 
 `.github/workflows/collect_observations.yml` offers delivery opportunities at
-minutes `17` and `47` of every UTC hour. An archive-backed slot guard permits
-at most one actual CelesTrak poll in each frozen two-hour scientific slot. The
-redundant triggers tolerate delayed GitHub cron delivery without changing
-sample weighting. Results are stored on the repository's separate
+minutes `07`, `17`, `37` and `47` of every UTC hour (widened from `17`/`47` on
+2026-07-28 for resilience against dropped GitHub cron windows). An
+archive-backed slot guard permits at most one actual CelesTrak poll in each
+frozen two-hour scientific slot. The redundant triggers tolerate delayed or
+dropped GitHub cron delivery without changing slot assignment or sample
+weighting. Results are stored on the repository's separate
 `data-collection` branch, so generated observations do not clutter the
 source-code history on `main`.
 
