@@ -2,9 +2,15 @@ name: Collect TLE observations
 
 on:
   schedule:
-    # Four attempts per two-hour scientific slot tolerate delayed GitHub cron
-    # delivery. The archive-backed slot guard permits at most one actual poll.
+    # Eight attempts per two-hour scientific slot tolerate delayed/dropped
+    # GitHub cron delivery (best-effort scheduling can skip whole windows under
+    # load). The archive-backed slot guard still permits at most one actual
+    # poll per slot, so extra triggers are cheap no-ops and do not change slot
+    # assignment or sample weighting. Redundancy widened mid-collection on
+    # 2026-07-28 after GitHub dropped several scheduled windows.
+    - cron: "7 * * * *"
     - cron: "17 * * * *"
+    - cron: "37 * * * *"
     - cron: "47 * * * *"
   workflow_dispatch: {}
 
