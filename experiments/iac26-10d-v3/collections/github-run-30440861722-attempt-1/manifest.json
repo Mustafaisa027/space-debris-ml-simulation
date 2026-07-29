@@ -1,0 +1,49 @@
+{
+  "experiment_config_path": "experiment/config.json",
+  "experiment_config_sha256": "81afeee18d5ce2a1b7de9dc8f3d13b6de47f728d3447abfec80f014f36849b89",
+  "experiment_id": "iac26-10d-v3",
+  "file_count": 7,
+  "files": [
+    {
+      "bytes": 1019,
+      "path": "environment/runtime.json",
+      "sha256": "8974e934a0f64e303ba64677c941b2892678b9bc11eb13f532eec51f82efbd49"
+    },
+    {
+      "bytes": 4318,
+      "path": "experiment/config.json",
+      "sha256": "c8f90084b7ad7b04b5316a16e75f72a08ef1d70495e114d463b64512f2571726"
+    },
+    {
+      "bytes": 86964,
+      "path": "history/conjunction_observations_iac26_75_v3.csv",
+      "sha256": "de6b1b8a786cbbe9d00eedffe175944e08c6de8e252b46f4d2912d509924e48f"
+    },
+    {
+      "bytes": 172438,
+      "path": "runs/20260729_094507/conjunction_dataset.csv",
+      "sha256": "b6bb39ff6fb7a605184976fa271c8af5b190684fcfdc9ca6160205589de86418"
+    },
+    {
+      "bytes": 50848,
+      "path": "runs/20260729_094507/identified_conjunctions.csv",
+      "sha256": "874ea551d4be86c7fcee2876309e21c21ce87463cc06ca68a9fc49b98191026a"
+    },
+    {
+      "bytes": 2315,
+      "path": "tle/tles_20260729_094507.json",
+      "sha256": "6864063ce47dfddf1c99dbdbe8cfe7ea0d51f2095beccb8660b557067c02c6dd"
+    },
+    {
+      "bytes": 11505,
+      "path": "tle/tles_20260729_094507.txt",
+      "sha256": "d3afebdaab92d3dbcf9d9d20a8974ba5b235a7995f927cd4c41a11a5c4dede9a"
+    }
+  ],
+  "generated_utc": "2026-07-29T09:53:09.747286Z",
+  "git_commit": "081f1cddeda6cd6c01cc19e6c29f72c23dbfbc7b",
+  "github_run_attempt": "1",
+  "github_run_id": "30440861722",
+  "schema_version": 3,
+  "total_bytes": 329407
+}
