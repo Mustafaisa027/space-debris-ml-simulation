@@ -101,3 +101,19 @@ def test_operator_documentation_matches_active_v3_contract():
     v3_protocol = Path("docs/EXPERIMENT_10D_V3.md").read_text(encoding="utf-8")
     assert "Provider-request spacing incident (corrected 2026-07-31)" in v3_protocol
     assert "29 sub-two-hour intervals among" in v3_protocol
+    assert "Quality-gate deviation and restoration" in v3_protocol
+    assert "all four enforcement sites were" in v3_protocol
+
+
+def test_frozen_v3_tle_quality_gates_remain_enforced():
+    cadence_source = Path("src/collection_cadence_health.py").read_text(
+        encoding="utf-8"
+    )
+    evidence_source = Path("src/space_debris/evidence.py").read_text(encoding="utf-8")
+    ml_source = Path("src/space_debris/ml.py").read_text(encoding="utf-8")
+
+    assert "len(set(hashes)) / len(hashes)" in cadence_source
+    assert "max_hash_run <= int(config.max_identical_tle_hash_run_bins)" in cadence_source
+    assert "Partition TLE-update diversity gate failed" in evidence_source
+    assert "tle_input_hash_diversity_fraction=" in ml_source
+    assert "max_identical_tle_hash_run_bins=" in ml_source

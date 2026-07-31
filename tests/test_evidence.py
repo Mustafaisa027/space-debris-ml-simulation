@@ -858,16 +858,7 @@ def test_frozen_evidence_rejects_stale_tle_rows(tmp_path):
         )
 
 
-def test_frozen_evidence_reports_but_no_longer_rejects_low_tle_diversity(tmp_path):
-    """TLE-hash diversity is a reported feed-cadence diagnostic, not a gate.
-
-    Collapsing the held-out partition to a near-single element set used to raise
-    a "Partition TLE-update diversity" error. After the feed-cadence
-    recalibration (docs/EXPERIMENT_10D_V3.md) these metrics are reported for
-    provenance but no longer block publication: they measure CelesTrak's
-    upstream refresh cadence, not collection quality. Coverage, gap, TLE-age and
-    all class/pair/snapshot support gates still apply.
-    """
+def test_frozen_evidence_rejects_low_tle_diversity_inside_test_partition(tmp_path):
     base = load_experiment_config("config/experiment_60_days.json")
     config = replace(
         base,
@@ -899,27 +890,15 @@ def test_frozen_evidence_reports_but_no_longer_rejects_low_tle_diversity(tmp_pat
     for record in records[-5:]:
         record["input_sha256"] = "a" * 64
 
-    paths = generate_evaluation_evidence(
-        dataset_path,
-        tmp_path / "out",
-        config,
-        feature_columns=SNAPSHOT_ONLY_FEATURES,
-        snapshot_records=records,
-        validated_input_binding={"validated": True},
-    )
-
-    # Evidence is produced despite the collapsed-diversity held-out partition.
-    assert {"split_manifest", "predictions", "evidence"} <= set(paths)
-    split = json.loads(paths["split_manifest"].read_text(encoding="utf-8"))
-    # The feed-cadence metric is still reported for provenance ...
-    assert "partition_tle_quality" in split
-    # ... and at least one partition is below the old 30% gate, proving the
-    # low-diversity condition no longer blocks publication.
-    diversities = [
-        q["tle_input_hash_diversity_fraction"]
-        for q in split["partition_tle_quality"].values()
-    ]
-    assert min(diversities) < config.min_tle_hash_diversity_fraction
+    with pytest.raises(EvidenceGenerationError, match="Partition TLE-update diversity"):
+        generate_evaluation_evidence(
+            dataset_path,
+            tmp_path / "out",
+            config,
+            feature_columns=SNAPSHOT_ONLY_FEATURES,
+            snapshot_records=records,
+            validated_input_binding={"validated": True},
+        )
 
 
 def test_claim_eligible_evidence_rejects_rule_recovery_feature_set(tmp_path):

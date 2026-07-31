@@ -42,12 +42,10 @@ requires 30/20 positive train/test rows, 10/5 positive train/test pairs, and
 two-hour snapshot-time bins; at least 90% must be occupied and no gap may exceed
 six hours. The gap is measured from actual snapshot timestamps, including the
 window endpoints, rather than nominal bin indices. Publication evaluation also
-rejects retained rows beyond the frozen 14-day TLE-age bound. TLE-hash
-diversity and longest identical-input run are reported as feed-cadence
-diagnostics but are no longer publication gates: they characterize CelesTrak's
-~daily upstream element-set refresh rate, not collection quality (see the
-"Feed-cadence gate recalibration" section of `docs/EXPERIMENT_10D_V3.md`). Only
-the frozen `iac26-leo-mixed-75-v2` catalogue cohort is
+rejects retained rows beyond the frozen 14-day TLE-age bound, requires at least
+30% unique TLE hashes across occupied bins, and rejects identical-hash runs
+longer than six bins. Only the
+frozen `iac26-leo-mixed-75-v2` catalogue cohort is
 eligible; older mixed-size snapshots remain an audit archive.
 
 Until that gate passes, the abstract sentence saying that results show
