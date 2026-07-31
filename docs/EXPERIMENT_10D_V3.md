@@ -35,10 +35,13 @@ experiment id, the collection window, and the output paths differ from v2.
   to v2 (the catalogue did not change).
 - Source: CelesTrak CATNR requests, with credentialed Space-Track fallback
   when secrets are available. Partial catalogue responses fail closed.
-- Cadence: GitHub delivery attempts at `:17` and `:47` every UTC hour, giving
-  four opportunities inside each frozen two-hour scientific slot. A
-  deterministic archive-backed slot guard makes every attempt after the first
-  successful poll in that slot a no-op.
+- Cadence: GitHub delivery attempts at `:07`, `:17`, `:37` and `:47` every UTC
+  hour, giving eight opportunities inside each frozen two-hour scientific
+  slot. A deterministic archive-backed slot guard makes every attempt after the
+  first successful poll in that slot a no-op and requires two elapsed hours
+  from the latest archived fetch before another provider request. This prevents
+  adjacent slot-boundary requests from violating CelesTrak's
+  one-download-per-update policy.
 - Archive: schema-3 immutable bundles under
   `experiments/iac26-10d-v3/collections/`.
 - Binding: each bundle records and verifies the experiment ID, canonical
@@ -68,6 +71,23 @@ Identical to v2:
   two-hour embargoes. The registered bootstrap seed is 214764.
 - If class or temporal support is insufficient after ten days, the valid
   result is `not_enough_data`; thresholds and support gates are not relaxed.
+
+## Provider-request spacing incident (corrected 2026-07-31)
+
+The original archive-backed guard enforced one successful fetch per scientific
+slot, but did not enforce two elapsed hours across adjacent slot boundaries.
+Delayed GitHub schedules therefore produced 29 sub-two-hour intervals among
+the first 60 verified v3 bundles; the minimum was 20.95 minutes. The immutable
+bundles remain valid, distinct physical snapshots and duplicate slots remain
+rejected, but this request frequency did not respect CelesTrak's
+one-download-per-update guidance.
+
+The guard was corrected before the collection window closed. It now uses the
+latest archived `fetched_utc` and refuses another provider request until the
+configured two-hour interval has elapsed, even when a new scientific slot is
+open. The incident and correction must remain in the acquisition provenance;
+bundles must never be described as independent orbital-element updates merely
+because their snapshot slots differ.
 
 ## Feed-cadence gate recalibration (2026-07-27, pre-analysis)
 

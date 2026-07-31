@@ -54,6 +54,14 @@ def slot_guard(config, snapshot_times: list[datetime], now_utc: datetime) -> dic
     start = _utc(config.collection_start_utc, "collection_start_utc")
     end = _utc(config.collection_end_utc, "collection_end_utc")
     interval_seconds = float(config.poll_interval_hours) * 3600.0
+    normalized_snapshots = sorted(
+        timestamp.astimezone(timezone.utc)
+        for timestamp in snapshot_times
+        if timestamp.tzinfo is not None
+        and start <= timestamp.astimezone(timezone.utc) < end
+    )
+    latest_snapshot = normalized_snapshots[-1] if normalized_snapshots else None
+    seconds_until_next_poll = 0.0
 
     if now < start:
         status, collect, current_slot = "before_window", False, None
@@ -62,12 +70,20 @@ def slot_guard(config, snapshot_times: list[datetime], now_utc: datetime) -> dic
     else:
         current_slot = int((now - start).total_seconds() // interval_seconds)
         occupied = {
-            int((timestamp.astimezone(timezone.utc) - start).total_seconds() // interval_seconds)
-            for timestamp in snapshot_times
-            if timestamp.tzinfo is not None and start <= timestamp.astimezone(timezone.utc) < end
+            int((timestamp - start).total_seconds() // interval_seconds)
+            for timestamp in normalized_snapshots
         }
-        collect = current_slot not in occupied
-        status = "collect" if collect else "slot_already_collected"
+        if current_slot in occupied:
+            collect = False
+            status = "slot_already_collected"
+        elif latest_snapshot is not None:
+            elapsed_seconds = (now - latest_snapshot).total_seconds()
+            seconds_until_next_poll = max(0.0, interval_seconds - elapsed_seconds)
+            collect = seconds_until_next_poll <= 0.0
+            status = "collect" if collect else "poll_interval_not_elapsed"
+        else:
+            collect = True
+            status = "collect"
 
     return {
         "schema_version": 1,
@@ -79,6 +95,13 @@ def slot_guard(config, snapshot_times: list[datetime], now_utc: datetime) -> dic
         "current_slot": current_slot,
         "archived_snapshot_count": len(snapshot_times),
         "archive_collections": config.archive_collections,
+        "latest_snapshot_utc": (
+            latest_snapshot.isoformat().replace("+00:00", "Z")
+            if latest_snapshot is not None
+            else None
+        ),
+        "minimum_poll_interval_hours": float(config.poll_interval_hours),
+        "seconds_until_next_poll": round(seconds_until_next_poll, 6),
     }
 
 

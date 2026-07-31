@@ -12,9 +12,12 @@
 minutes `07`, `17`, `37` and `47` of every UTC hour (widened from `17`/`47` on
 2026-07-28 for resilience against dropped GitHub cron windows). An
 archive-backed slot guard permits at most one actual CelesTrak poll in each
-frozen two-hour scientific slot. The redundant triggers tolerate delayed or
-dropped GitHub cron delivery without changing slot assignment or sample
-weighting. Results are stored on the repository's separate
+frozen two-hour scientific slot and also requires two elapsed hours since the
+latest archived fetch. The latter protects CelesTrak's
+one-download-per-update policy when a delayed fetch lands just before a slot
+boundary. The redundant triggers tolerate delayed or dropped GitHub cron
+delivery without changing slot assignment or sample weighting. Results are
+stored on the repository's separate
 `data-collection` branch, so generated observations do not clutter the
 source-code history on `main`.
 
