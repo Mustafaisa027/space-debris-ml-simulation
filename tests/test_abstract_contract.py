@@ -100,7 +100,7 @@ def test_operator_documentation_matches_active_v3_contract():
     assert "60-day frozen-cohort protocol below" not in readme
     v3_protocol = Path("docs/EXPERIMENT_10D_V3.md").read_text(encoding="utf-8")
     assert "Provider-request spacing incident (corrected 2026-07-31)" in v3_protocol
-    assert "29 sub-two-hour intervals among" in v3_protocol
+    assert "30 sub-two-hour intervals among" in v3_protocol
     assert "Quality-gate deviation and restoration" in v3_protocol
     assert "all four enforcement sites were" in v3_protocol
 
