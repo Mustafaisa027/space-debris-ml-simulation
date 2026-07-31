@@ -75,6 +75,7 @@ def test_operator_documentation_matches_active_v3_contract():
 
     for required_text in (
         "minutes `07`, `17`, `37` and `47` of every UTC hour",
+        "requires two elapsed hours since the",
         "manifest schema 3",
         "config/experiment_10_days_v3.json",
         "2026-07-26T00:17:00Z",
@@ -97,3 +98,6 @@ def test_operator_documentation_matches_active_v3_contract():
     assert "Final IAC figures should use the 60-day history" not in plotting_guide
     assert "active 10-day frozen-cohort protocol" in readme
     assert "60-day frozen-cohort protocol below" not in readme
+    v3_protocol = Path("docs/EXPERIMENT_10D_V3.md").read_text(encoding="utf-8")
+    assert "Provider-request spacing incident (corrected 2026-07-31)" in v3_protocol
+    assert "29 sub-two-hour intervals among" in v3_protocol
