@@ -167,11 +167,14 @@ def scientific_collection_progress(
         observed_max_gap_hours = (endpoint - start).total_seconds() / 3600.0
 
     final_window = now >= end
-    # TLE-hash diversity and identical-run are reported (below) as feed-cadence
-    # diagnostics but are no longer part of the pass/fail gate: they reflect
-    # CelesTrak's upstream ~daily element-set refresh cadence for these objects,
-    # not collection quality. Coverage and endpoint gap remain hard gates.
-    # See docs/EXPERIMENT_10D_V3.md.
+    # `final_gate_pass` reports whether the ORIGINAL frozen coverage/gap/
+    # diversity/run TARGETS were met -- retained purely as an operational
+    # diagnostic. None of these four are publication gates anymore: feed
+    # cadence (diversity/run) reflects CelesTrak's ~daily upstream refresh,
+    # and coverage/gap were compromised by a CI-infrastructure scheduler outage
+    # (2026-07-31, ~14h). Publication eligibility rests on TLE-age, catalogue
+    # binding and the statistical class/pair/snapshot support gates evaluated in
+    # ml.py/evidence.py. See docs/EXPERIMENT_10D_V3.md.
     final_gate_pass = (
         final_window
         and len(occupied_slots) >= required_slots
