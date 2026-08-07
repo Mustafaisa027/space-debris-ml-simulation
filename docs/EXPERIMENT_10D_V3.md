@@ -76,11 +76,12 @@ Identical to v2:
 
 The original archive-backed guard enforced one successful fetch per scientific
 slot, but did not enforce two elapsed hours across adjacent slot boundaries.
-Delayed GitHub schedules therefore produced 29 sub-two-hour intervals among
-the first 60 verified v3 bundles; the minimum was 20.95 minutes. The immutable
-bundles remain valid, distinct physical snapshots and duplicate slots remain
-rejected, but this request frequency did not respect CelesTrak's
-one-download-per-update guidance.
+Delayed GitHub schedules therefore produced 29 sub-two-hour intervals before
+2026-07-31. One final request already admitted by the original guard brought
+the immutable total to 30 among the first 61 verified v3 bundles; the minimum
+was 20.95 minutes. The bundles remain valid, distinct physical snapshots and
+duplicate slots remain rejected, but this request frequency did not respect
+CelesTrak's one-download-per-update guidance.
 
 The guard was corrected before the collection window closed. It now uses the
 latest archived `fetched_utc` and refuses another provider request until the
@@ -89,79 +90,44 @@ open. The incident and correction must remain in the acquisition provenance;
 bundles must never be described as independent orbital-element updates merely
 because their snapshot slots differ.
 
-## Coverage / gap / feed-cadence gates (pre-analysis reclassification)
+## Quality-gate deviations and restoration
 
-The v3 config still carries `min_tle_hash_diversity_fraction = 0.30` and
-`max_identical_tle_hash_run_bins = 6` because those bytes are cryptographically
-bound into every immutable collection bundle and cannot be edited without
-invalidating already-collected data. However, on collection day 2 — before any
-v3 model was trained or evaluated — direct characterization of the live feed
-showed these two thresholds, inherited from the 60-day v1 pilot, are
-miscalibrated for CelesTrak's real behaviour:
+The immutable v3 config binds four cadence-quality publication gates:
+snapshot coverage >= 90%, endpoint-inclusive maximum gap <= 6 hours,
+TLE-hash diversity >= 30%, and longest identical-hash run <= 6 bins. A failure
+of any gate yields `not_enough_data`; an operational explanation does not turn a
+failed frozen threshold into a passing result.
 
-- CelesTrak publishes a fresh element set for these 75 LEO objects only about
-  once per UTC day (observed refreshes clustered in the evening/night, with a
-  long quiet daytime-UTC stretch). Identical-input runs of 6-9 two-hour bins
-  are therefore *normal upstream cadence*, not a stale or broken feed. On
-  2026-07-27 the observed run reached 7 (> 6) and diversity 0.176 (< 0.30)
-  while the collector was demonstrably healthy.
+### Deviation chronology
 
-These two metrics measure the **upstream catalogue's maintenance frequency**,
-not our collection quality. Each poll independently fetches fresh CelesTrak
-data and passes checksum, 69-character-width and catalogue-cohort validation, so
-the collector cannot silently serve a stuck cache. Accordingly, both metrics are
-**reclassified from hard publication gates to reported diagnostics** in
-`ml.py`, `evidence.py` and `collection_cadence_health.py`. This decision is:
+- On 2026-07-27, after live v3 acquisition had begun and feed-cadence outcomes
+  were visible, commit `f86fa1d` changed TLE-hash diversity and identical-run
+  from gates to diagnostics.
+- On 2026-08-02, after the GitHub Actions outage had made the temporal targets
+  unreachable, PR #15 / commit `5b25444` changed coverage and endpoint gap from
+  gates to diagnostics.
 
-- made **before any model evaluation** (pre-analysis, not outcome-tuned);
-- based only on **data-acquisition characterization**, independent of any model
-  result;
-- **narrow**: coverage (>=90%), endpoint gap (<=6 h), TLE age (<=14 d),
-  catalogue binding, and every class/pair/snapshot statistical-support gate
-  remain hard fail-closed requirements, unchanged.
+Both changes were post-start and outcome-dependent protocol deviations. They
+must remain in the audit history and must not be described as preregistration or
+as a pre-analysis amendment that preserves the original final gate.
 
-The retained config values now serve as reported reference thresholds only.
+### Final observed gate result
 
-### Snapshot coverage and endpoint gap (2026-07-31, CI-infrastructure outage)
+The immutable v3 archive contains 97 unique schema-3 bundles for 97/120 slots
+(80.8333% coverage). Its endpoint-inclusive maximum gap is 16.843611 hours,
+there are 30 unique TLE hashes among 97 snapshots (30.9278% diversity), and the
+longest identical-hash run is 8 bins. Therefore coverage fails, endpoint gap
+fails, diversity passes, and identical-hash run fails. The valid frozen-protocol
+result is `not_enough_data`; no numerical abstract claim is eligible.
 
-A second, independent event forced the same treatment for the two temporal
-gates. On 2026-07-31, GitHub Actions' best-effort scheduler dropped a ~14-hour
-window — seven consecutive two-hour slots (bins 65–71) received no run at all,
-despite the widened `07/17/37/47` cron redundancy. GitHub scheduled workflows
-are explicitly best-effort and can skip whole windows under load; no in-repo
-change can prevent this, and a past 2-hour snapshot cannot be backfilled (the
-element set at that instant is gone). This permanently put two frozen gates out
-of reach for the v3 window:
+### Restoration
 
-- snapshot coverage: at most ~88.3% achievable (< the 90% target);
-- max endpoint-inclusive gap: 16.8 h (> the 6 h target), and monotonic.
-
-This shortfall is a **continuous-integration infrastructure artifact, not a
-defect in the collected geometry**. Critically, the claim-eligible task is a
-geometry/kinematics **classification** problem (predict the propagated proxy
-label from snapshot-state features), **not a time-series forecast** — a temporal
-hole removes some training samples but does not bias the learned risk mapping.
-Accordingly, snapshot coverage and endpoint gap are also **reclassified from
-hard publication gates to reported diagnostics** in `ml.py`, `evidence.py` and
-`collection_cadence_health.py`.
-
-### What still gates publication (unchanged)
-
-Publication eligibility now rests entirely on requirements that reflect genuine
-data sufficiency and integrity, all **unchanged and hard fail-closed**:
-
-- both classes present in train and test;
-- the frozen class / positive-row / positive-pair / positive-snapshot support
-  gates (30/20 rows, 10/5 pairs, 5/3 snapshots) on the chronological
-  pair-held-out split;
-- the 14-day TLE-age bound, catalogue version and exact catalogue SHA-256
-  binding, and the immutable per-bundle config/manifest hash chain.
-
-If those support gates fail, the result is still `not_enough_data` — a genuine
-insufficiency of real conjunction events, never a coverage/cadence technicality.
-The paper must report coverage (~88%), the 16.8 h CI gap and the feed-cadence
-figures transparently as limitations, and must not describe the run as having
-passed a 90%/6 h temporal-completeness gate.
+Before corrected-TCA resimulation, model fitting, or evidence generation, all
+four enforcement sites are restored to fail-closed behavior: collection final
+status, model-window validation, partition/fold validation, and evidence
+generation. The config, catalogue, labels, thresholds, model definitions,
+archive bundles, and overall architecture remain unchanged. The incident and
+the two deviation commits remain part of the transparent provenance record.
 
 ## Release condition
 

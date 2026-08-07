@@ -167,19 +167,18 @@ def scientific_collection_progress(
         observed_max_gap_hours = (endpoint - start).total_seconds() / 3600.0
 
     final_window = now >= end
-    # `final_gate_pass` reports whether the ORIGINAL frozen coverage/gap/
-    # diversity/run TARGETS were met -- retained purely as an operational
-    # diagnostic. None of these four are publication gates anymore: feed
-    # cadence (diversity/run) reflects CelesTrak's ~daily upstream refresh,
-    # and coverage/gap were compromised by a CI-infrastructure scheduler outage
-    # (2026-07-31, ~14h). Publication eligibility rests on TLE-age, catalogue
-    # binding and the statistical class/pair/snapshot support gates evaluated in
-    # ml.py/evidence.py. See docs/EXPERIMENT_10D_V3.md.
+    # These four values are immutable publication gates in the experiment
+    # config.  They remain fail-closed even when the cause of a failure is an
+    # upstream feed cadence or CI outage; observed outcomes cannot relax a
+    # frozen protocol.
     final_gate_pass = (
         final_window
         and len(occupied_slots) >= required_slots
         and observed_max_gap_hours <= float(config.max_snapshot_gap_hours)
         and bool(hashes)
+        and len(set(hashes)) / len(hashes)
+        >= float(config.min_tle_hash_diversity_fraction)
+        and max_hash_run <= int(config.max_identical_tle_hash_run_bins)
     )
     if now < start:
         status = "before_window"
