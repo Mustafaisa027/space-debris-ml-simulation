@@ -76,11 +76,12 @@ Identical to v2:
 
 The original archive-backed guard enforced one successful fetch per scientific
 slot, but did not enforce two elapsed hours across adjacent slot boundaries.
-Delayed GitHub schedules therefore produced 30 sub-two-hour intervals among
-the first 61 verified v3 bundles; the minimum was 20.95 minutes. The immutable
-bundles remain valid, distinct physical snapshots and duplicate slots remain
-rejected, but this request frequency did not respect CelesTrak's
-one-download-per-update guidance.
+Delayed GitHub schedules therefore produced 29 sub-two-hour intervals before
+2026-07-31. One final request already admitted by the original guard brought
+the immutable total to 30 among the first 61 verified v3 bundles; the minimum
+was 20.95 minutes. The bundles remain valid, distinct physical snapshots and
+duplicate slots remain rejected, but this request frequency did not respect
+CelesTrak's one-download-per-update guidance.
 
 The guard was corrected before the collection window closed. It now uses the
 latest archived `fetched_utc` and refuses another provider request until the
