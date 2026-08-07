@@ -1100,34 +1100,34 @@ def compare_models(
 
     window_failures: list[str] = []
     if min_snapshot_coverage_fraction is not None:
-        # Snapshot-coverage fraction, max snapshot gap, TLE-hash diversity and
-        # longest identical-input run are computed and reported in
-        # window_quality for a transparent limitations statement, but are NOT
-        # hard publication gates. Two independent, pre-analysis findings drove
-        # this (both before any v3 model was evaluated):
-        #   (1) Feed cadence (2026-07-27): CelesTrak refreshes these 75 LEO
-        #       objects only ~once per UTC day, so the v1-pilot >=30%/<=6-bin
-        #       thresholds flagged normal upstream cadence as "stale".
-        #   (2) CI coverage (2026-07-31): GitHub Actions' best-effort scheduler
-        #       dropped a ~14h window (7 consecutive 2h slots) that no in-repo
-        #       cron redundancy can prevent and no forward collection can
-        #       backfill -- a CI-infrastructure artifact, not a defect in the
-        #       collected geometry.
-        # This geometry/kinematics-learning comparison is not a time-series
-        # forecast, so a temporal hole does not bias the learned risk mapping.
-        # Publication eligibility instead rests on the statistical class /
-        # positive-row / positive-pair / positive-snapshot support gates
-        # (enforced separately and UNCHANGED), plus TLE-age and catalogue
-        # binding below -- the genuine data-sufficiency requirements. See
-        # docs/EXPERIMENT_10D_V3.md ("Coverage / gap / feed-cadence gates").
-        _ = (
-            float(window_quality["snapshot_coverage_fraction"]),
-            float(window_quality["max_snapshot_gap_hours"]),
-            min_snapshot_coverage_fraction,
-            max_snapshot_gap_hours,
-            min_tle_hash_diversity_fraction,
-            max_identical_tle_hash_run_bins,
+        coverage = float(window_quality["snapshot_coverage_fraction"])
+        observed_gap = float(window_quality["max_snapshot_gap_hours"])
+        observed_diversity = float(
+            window_quality["tle_input_hash_diversity_fraction"]
         )
+        observed_identical_run = int(
+            window_quality["max_identical_tle_hash_run_bins"]
+        )
+        if coverage < min_snapshot_coverage_fraction:
+            window_failures.append(
+                f"snapshot_coverage_fraction={coverage:.6f} < "
+                f"required={min_snapshot_coverage_fraction:.6f}"
+            )
+        if observed_gap > max_snapshot_gap_hours:
+            window_failures.append(
+                f"max_snapshot_gap_hours={observed_gap:.6f} > "
+                f"allowed={max_snapshot_gap_hours:.6f}"
+            )
+        if observed_diversity < min_tle_hash_diversity_fraction:
+            window_failures.append(
+                f"tle_input_hash_diversity_fraction={observed_diversity:.6f} < "
+                f"required={min_tle_hash_diversity_fraction:.6f}"
+            )
+        if observed_identical_run > max_identical_tle_hash_run_bins:
+            window_failures.append(
+                f"max_identical_tle_hash_run_bins={observed_identical_run} > "
+                f"allowed={max_identical_tle_hash_run_bins}"
+            )
     if maximum_tle_age_hours is not None:
         observed_tle_age = float(window_quality["maximum_observed_tle_age_hours"])
         if observed_tle_age > maximum_tle_age_hours:
@@ -1420,11 +1420,16 @@ def time_series_cv_report(
             continue
         fold_tle_quality = None
         if min_tle_hash_diversity_fraction is not None:
-            # Feed-cadence metrics are reported per fold but no longer skip a
-            # fold: they reflect CelesTrak's upstream ~daily refresh cadence for
-            # these objects, not collection quality. See docs/EXPERIMENT_10D_V3.md.
             train_tle_quality = _partition_tle_hash_quality(split.train, snapshot_records)
             test_tle_quality = _partition_tle_hash_quality(split.test, snapshot_records)
+            if any(
+                quality["tle_input_hash_diversity_fraction"]
+                < min_tle_hash_diversity_fraction
+                or quality["max_identical_tle_hash_run_bins"]
+                > max_identical_tle_hash_run_bins
+                for quality in (train_tle_quality, test_tle_quality)
+            ):
+                continue
             fold_tle_quality = {"train": train_tle_quality, "test": test_tle_quality}
         valid_partitions += 1
         evaluated_rows = _evaluate_split(

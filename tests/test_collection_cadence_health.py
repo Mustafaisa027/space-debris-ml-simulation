@@ -144,6 +144,20 @@ def test_scientific_progress_detects_unreachable_final_coverage():
     assert report["maximum_reachable_snapshot_slots"] == 1
 
 
+def test_final_progress_enforces_frozen_tle_quality_gates():
+    config = load_experiment_config("config/experiment_10_days_v2.json")
+    end = datetime.fromisoformat(config.collection_end_utc.replace("Z", "+00:00"))
+    observations = [_observation(slot, "a" * 64) for slot in range(120)]
+
+    report = scientific_collection_progress(config, observations, end)
+
+    assert report["final_window_coverage_fraction"] == 1.0
+    assert report["observed_to_now_max_snapshot_gap_hours"] < 6.0
+    assert report["tle_hash_diversity_fraction"] == pytest.approx(1 / 120)
+    assert report["max_identical_tle_hash_run_bins"] == 120
+    assert report["final_gate_pass"] is False
+
+
 def test_final_progress_matches_publication_window_quality_metrics():
     config = load_experiment_config("config/experiment_10_days_v2.json")
     end = datetime.fromisoformat(config.collection_end_utc.replace("Z", "+00:00"))
