@@ -1,0 +1,92 @@
+{
+  "experiment_id": "iac26-15d-v4",
+  "duration_days": 15,
+  "poll_interval_hours": 3,
+  "minimum_provider_poll_interval_hours": 2,
+  "provider": "auto",
+  "source": "CelesTrak GP API with credentialed Space-Track fallback",
+  "note": "Pre-registered independent schema-3 confirmation experiment informed by the immutable failed v2/v3 pilots. v2 and v3 remain audit data and are never pooled into v4. The accepted abstract does not bind calendar duration or cadence. v4 preserves the same 120 target slots, frozen 75-object catalogue, simulation, labels, models, seeds, statistical-support gates and four cadence-quality thresholds. It extends the window to 15 days and separates three-hour scientific slots from the unchanged two-hour provider-request floor, providing one hour of delivery slack without increasing request frequency. These choices are frozen before the v4 window opens and must not be changed after acquisition starts.",
+  "default_query": {
+    "preset": "leo_mixed",
+    "catalog_version": "iac26-leo-mixed-75-v2",
+    "catalog_sha256": "64c3d2329281da0e246226cb552aafe3b961c553c9487d7cfd9c96374aaa1f4c",
+    "max_objects": 75
+  },
+  "simulation": {
+    "leo_min_altitude_km": 160,
+    "leo_max_altitude_km": 2000,
+    "horizon_minutes": 720,
+    "step_minutes": 5,
+    "screening_step_seconds": 30,
+    "candidate_threshold_km": 200,
+    "fixed_threshold_km": 25,
+    "label_threshold_km": 50,
+    "label_relative_velocity_km_s": 10,
+    "max_tle_age_hours": 336
+  },
+  "evaluation": {
+    "time_column": "snapshot_utc",
+    "train_time_fraction": 0.40,
+    "test_pair_fraction": 0.25,
+    "pair_seed": "iac26-pair-split-v2",
+    "collection_window": {
+      "start_utc": "2026-08-10T00:17:00Z",
+      "end_utc": "2026-08-25T00:17:00Z",
+      "slot_anchor_basis": "github_actions_multi_cron_utc",
+      "slot_timestamp_field": "snapshot_utc",
+      "slot_assignment": "half_open_snapshot_bins",
+      "min_snapshot_coverage_fraction": 0.90,
+      "max_snapshot_gap_hours": 6,
+      "min_tle_hash_diversity_fraction": 0.30,
+      "max_identical_tle_hash_run_bins": 6
+    },
+    "evidence": {
+      "primary_model": "xgboost",
+      "primary_feature_set": "snapshot_only",
+      "required_models": ["logistic_regression", "random_forest", "svm", "xgboost"],
+      "inner_train_time_fraction": 0.75,
+      "inner_validation_pair_fraction": 0.25,
+      "inner_pair_seed": "iac26-operating-point-v2",
+      "min_inner_train_positive_rows": 20,
+      "min_inner_validation_positive_rows": 10,
+      "min_inner_train_positive_pairs": 5,
+      "min_inner_validation_positive_pairs": 3,
+      "min_inner_train_positive_snapshots": 3,
+      "min_inner_validation_positive_snapshots": 2,
+      "bootstrap_replicates": 2000,
+      "bootstrap_seed": 214764,
+      "confidence_level": 0.95,
+      "recall_noninferiority_margin": 0.05,
+      "min_valid_bootstrap_fraction": 0.90,
+      "adaptability_min_folds": 5,
+      "adaptability_bootstrap_replicates": 10000,
+      "adaptability_block_hours": 12,
+      "adaptability_embargo_hours": 2,
+      "adaptability_min_blocks": 10,
+      "adaptability_min_unique_objects": 30,
+      "adaptability_min_pairs": 30,
+      "adaptability_min_positive_pairs_per_block": 5,
+      "adaptability_min_positive_days_per_block": 1
+    },
+    "quality_gate": {
+      "min_train_positive_rows": 30,
+      "min_test_positive_rows": 20,
+      "min_train_positive_pairs": 10,
+      "min_test_positive_pairs": 5,
+      "min_train_positive_snapshots": 5,
+      "min_test_positive_snapshots": 3
+    }
+  },
+  "outputs": {
+    "archive_collections": "experiments/iac26-15d-v4/collections",
+    "snapshots": "data/tle_snapshots_iac26_75_v4",
+    "runs": "outputs/runs_iac26_75_v4",
+    "history": "outputs/history/conjunction_observations_iac26_75_v4.csv",
+    "archive_import_report": "outputs/history/collection_archive_import_iac26_75_v4.json",
+    "history_rebuild_report": "outputs/history/history_rebuild_report_iac26_75_v4.json",
+    "resimulated_runs": "outputs/resimulated_runs_iac26_75_v4",
+    "resimulated_history": "outputs/history/conjunction_observations_resimulated_iac26_75_v4.csv",
+    "resimulation_report": "outputs/history/resimulation_report_iac26_75_v4.json",
+    "time_split_report": "outputs/history/model_comparison_iac26_75_v4_pair_grouped_time_split.csv"
+  }
+}

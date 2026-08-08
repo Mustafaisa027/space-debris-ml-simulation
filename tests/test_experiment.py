@@ -121,6 +121,7 @@ def test_load_experiment_config_exposes_authoritative_defaults(tmp_path):
     assert config.max_snapshot_gap_hours == 6
     assert config.min_tle_hash_diversity_fraction == 0.5
     assert config.max_identical_tle_hash_run_bins == 12
+    assert config.minimum_provider_poll_interval_hours == 2
     assert config.bootstrap_replicates == 2000
     assert config.bootstrap_seed == 114764
     assert config.recall_noninferiority_margin == 0.05
@@ -213,6 +214,16 @@ def test_experiment_config_rejects_window_duration_different_from_protocol(tmp_p
         load_experiment_config(path)
 
 
+def test_experiment_config_rejects_provider_floor_above_scientific_slot(tmp_path):
+    raw = _config()
+    raw["minimum_provider_poll_interval_hours"] = 3
+    path = tmp_path / "invalid-provider-floor.json"
+    path.write_text(json.dumps(raw), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="cannot exceed"):
+        load_experiment_config(path)
+
+
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     [
@@ -260,42 +271,62 @@ def test_repository_v2_config_is_pre_registered_and_isolated():
     assert config.min_tle_hash_diversity_fraction == 0.30
 
 
-def test_repository_v3_config_is_active_and_frozen_protocol_consistent():
-    """v3 re-anchors v2's window; guard against a day-10 finalization surprise.
-
-    Pins that (a) v3 is the wired ACTIVE claim-eligible config, (b) its window
-    excludes the day-0 cold-start, (c) it reuses the v2 catalogue byte-for-byte,
-    and (d) its evaluation fields match the frozen adaptability protocol
-    registered in evidence.py -- an inconsistency here would only surface as a
-    fail-closed error at finalization, which this catches now.
-    """
+def test_repository_v4_config_is_active_and_frozen_protocol_consistent():
+    """v4 is independent while preserving the accepted scientific method."""
     from space_debris.experiment import ACTIVE_EXPERIMENT_CONFIG
     from space_debris.evidence import _validate_frozen_adaptability_protocol
 
-    assert ACTIVE_EXPERIMENT_CONFIG.name == "experiment_10_days_v3.json"
+    assert ACTIVE_EXPERIMENT_CONFIG.name == "experiment_15_days_v4.json"
 
+    v4 = load_experiment_config("config/experiment_15_days_v4.json")
     v3 = load_experiment_config("config/experiment_10_days_v3.json")
-    v2 = load_experiment_config("config/experiment_10_days_v2.json")
 
-    assert v3.experiment_id == "iac26-10d-v3"
-    assert v3.duration_days == 10
-    assert v3.collection_start_utc == "2026-07-26T00:17:00Z"
-    assert v3.collection_end_utc == "2026-08-05T00:17:00Z"
-    assert v3.archive_collections == "experiments/iac26-10d-v3/collections"
-    assert v3.snapshot_dir.endswith("tle_snapshots_iac26_75_v3")
-    assert v3.history.endswith("_iac26_75_v3.csv")
+    assert v4.experiment_id == "iac26-15d-v4"
+    assert v4.duration_days == 15
+    assert v4.poll_interval_hours == 3
+    assert v4.minimum_provider_poll_interval_hours == 2
+    assert v4.duration_days * 24 / v4.poll_interval_hours == 120
+    assert v4.collection_start_utc == "2026-08-10T00:17:00Z"
+    assert v4.collection_end_utc == "2026-08-25T00:17:00Z"
+    assert v4.archive_collections == "experiments/iac26-15d-v4/collections"
+    assert v4.snapshot_dir.endswith("tle_snapshots_iac26_75_v4")
+    assert v4.history.endswith("_iac26_75_v4.csv")
 
-    # Same catalogue as v2 (only the experiment wrapper changed).
-    assert v3.catalog_version == "iac26-leo-mixed-75-v2"
-    assert v3.catalog_sha256 == v2.catalog_sha256
+    # Catalogue, method, gates and seeds are preserved; only prospective
+    # acquisition mechanics and isolated output paths change.
+    assert v4.catalog_version == v3.catalog_version
+    assert v4.catalog_sha256 == v3.catalog_sha256
+    frozen_fields = (
+        "candidate_threshold_km",
+        "fixed_threshold_km",
+        "label_threshold_km",
+        "label_relative_velocity_km_s",
+        "max_tle_age_hours",
+        "train_time_fraction",
+        "test_pair_fraction",
+        "pair_seed",
+        "primary_model",
+        "primary_feature_set",
+        "required_models",
+        "inner_pair_seed",
+        "bootstrap_replicates",
+        "bootstrap_seed",
+        "recall_noninferiority_margin",
+        "min_snapshot_coverage_fraction",
+        "max_snapshot_gap_hours",
+        "min_tle_hash_diversity_fraction",
+        "max_identical_tle_hash_run_bins",
+        "min_train_positive_rows",
+        "min_test_positive_rows",
+        "min_train_positive_pairs",
+        "min_test_positive_pairs",
+        "min_train_positive_snapshots",
+        "min_test_positive_snapshots",
+    )
+    for field in frozen_fields:
+        assert getattr(v4, field) == getattr(v3, field)
 
-    # Every frozen gate/seed/threshold is identical to v2.
-    assert v3.train_time_fraction == v2.train_time_fraction
-    assert v3.min_tle_hash_diversity_fraction == v2.min_tle_hash_diversity_fraction
-    assert v3.max_identical_tle_hash_run_bins == v2.max_identical_tle_hash_run_bins
-
-    # config <-> evidence.py frozen protocol must agree, or finalization fails closed.
-    _validate_frozen_adaptability_protocol(v3)
+    _validate_frozen_adaptability_protocol(v4)
 
 
 def test_experiment_config_rejects_unsafe_archive_collection_path(tmp_path):

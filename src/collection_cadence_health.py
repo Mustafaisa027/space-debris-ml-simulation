@@ -267,9 +267,21 @@ def cadence_health(config, bundle_times: list[datetime], now_utc: datetime) -> d
     }
 
 
+def cadence_report_passes(report: dict) -> bool:
+    """Gate finalization on both operational liveness and scientific quality."""
+    if report.get("healthy") is not True:
+        return False
+    progress = report.get("scientific_progress")
+    if not isinstance(progress, dict):
+        return False
+    if progress.get("final_gate_evaluated") is True:
+        return progress.get("final_gate_pass") is True
+    return True
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Verify v2 archive liveness and report scientific collection progress"
+        description="Verify archive liveness and report scientific collection progress"
     )
     parser.add_argument("archive_root", type=Path)
     parser.add_argument("--config", default=str(DEFAULT_EXPERIMENT_CONFIG))
@@ -287,7 +299,7 @@ def main() -> None:
         config, observations, now
     )
     print(json.dumps(report, indent=2, sort_keys=True))
-    if not report["healthy"]:
+    if not cadence_report_passes(report):
         raise SystemExit(1)
 
 

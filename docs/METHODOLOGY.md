@@ -8,21 +8,22 @@ the limitations explicitly rather than leaving them implicit.
 
 ## Active experiment version
 
-The claim-eligible acquisition protocol is `iac26-10d-v3`, frozen in
-`config/experiment_10_days_v3.json` for 2026-07-26T00:17:00Z through
-2026-08-05T00:17:00Z. Schema-3 bundles bind the experiment ID, canonical
+The prospective claim-eligible acquisition protocol is `iac26-15d-v4`, frozen
+in `config/experiment_15_days_v4.json` for 2026-08-10T00:17:00Z through
+2026-08-25T00:17:00Z. Schema-3 bundles bind the experiment ID, canonical
 configuration hash, embedded configuration, catalogue hash, simulation
 parameters and runtime. They are isolated under
-`experiments/iac26-10d-v3/collections/`. v3 re-anchors the `iac26-10d-v2`
-window on collection day 1 to exclude an initial TLE-feed cold-start; v2 is
-retained as pilot/audit only (see `docs/EXPERIMENT_10D_V3.md`).
+`experiments/iac26-15d-v4/collections/`. The v2 and v3 archives remain
+immutable failed pilot/audit experiments and are never pooled into v4. v4
+preserves 120 target observations while separating three-hour scientific slots
+from the two-hour provider-request floor (see `docs/EXPERIMENT_15D_V4.md`).
 
 References below to the 60-day `iac26-leo-mixed-75-v1` protocol document the
 preserved pilot/audit design. V1 cannot satisfy its frozen 90% gate under the
 hardened legacy-bundle policy and is not pooled into v2. The model, label,
 feature, split and fail-closed inference methods remain unchanged. The
 version-specific acquisition rationale is in `docs/EXPERIMENT_10D_V2.md`.
-For adaptability inference, v2 additionally freezes a 40% outer training-time
+For adaptability inference, v2-v4 freeze a 40% outer training-time
 fraction, ten complete 12-hour future blocks separated by two-hour embargoes,
 one positive UTC day per eligible block, and bootstrap seed 214764. The
 48-hour/50%/114764 values described later belong only to the retained v1

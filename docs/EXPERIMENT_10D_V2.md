@@ -4,7 +4,8 @@
 > re-anchored to `iac26-10d-v3` to exclude an initial TLE-feed cold-start that
 > permanently breached the frozen `max_identical_tle_hash_run_bins <= 6` gate.
 > The v2 archive is kept unmodified as pilot/audit data and is not pooled into
-> v3. The active claim-eligible protocol is now `docs/EXPERIMENT_10D_V3.md`.
+> v3. The active claim-eligible protocol is now the independent v4 confirmation
+> experiment in `docs/EXPERIMENT_15D_V4.md`.
 > The contract below is retained for the historical v2 record.
 
 ## Status and scientific boundary
