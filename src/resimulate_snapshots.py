@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import tempfile
+import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
@@ -208,7 +209,17 @@ def resimulate_snapshot(
         (temporary_dir / "resimulation.json").write_text(
             json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
-        os.replace(temporary_dir, final_dir)
+        # Windows can transiently fail os.replace on a directory with
+        # PermissionError ("Access is denied") when an antivirus/indexer briefly
+        # holds a handle to the just-written temp dir. Retry with short backoff.
+        for _attempt in range(12):
+            try:
+                os.replace(temporary_dir, final_dir)
+                break
+            except PermissionError:
+                if _attempt == 11:
+                    raise
+                time.sleep(0.5)
         return report
     except Exception:
         shutil.rmtree(temporary_dir, ignore_errors=True)
