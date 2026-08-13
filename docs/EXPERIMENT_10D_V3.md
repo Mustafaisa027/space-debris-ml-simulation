@@ -2,7 +2,7 @@
 
 ## Status and scientific boundary
 
-`iac26-10d-v3` is the active claim-eligible experiment. Its half-open
+`iac26-10d-v3` is a completed, immutable failed pilot/audit experiment. Its half-open
 collection window is 2026-07-26T00:17:00Z to 2026-08-05T00:17:00Z, with one
 nominal observation every two hours (120 slots). The accepted IAC abstract
 specifies TLE/SGP4 conjunction analysis, the four classifiers, and
@@ -53,9 +53,9 @@ experiment id, the collection window, and the output paths differ from v2.
 Identical to v2:
 
 - At least 108/120 slots (90%) and no endpoint-inclusive gap above six hours.
-- TLE-hash diversity and longest identical-input run are reported for
-  provenance but are **not** publication gates (see "Feed-cadence gate
-  recalibration" below).
+- TLE-hash diversity and longest identical-input run are binding publication
+  gates. Their temporary post-start reclassification is recorded below as a
+  protocol deviation; it does not alter the frozen final result.
 - Proxy label remains minimum distance <= 50 km and TCA relative velocity
   >= 10 km/s. It is not Probability of Collision.
 - Primary learner remains snapshot-only XGBoost; Logistic Regression, Random

@@ -37,7 +37,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Collect repeated TLE snapshots and conjunction observations")
     parser.add_argument("--config", default=str(config.path), help="authoritative experiment JSON")
     parser.add_argument("--days", type=float, default=config.duration_days, help="collection duration")
-    parser.add_argument("--interval-hours", type=float, default=config.poll_interval_hours, help="CelesTrak recommends not polling more often")
+    parser.add_argument(
+        "--interval-hours",
+        type=float,
+        default=config.minimum_provider_poll_interval_hours,
+        help="minimum elapsed hours between provider requests",
+    )
     parser.add_argument("--once", action="store_true", help="run one fetch/simulate cycle and exit")
     parser.add_argument("--catnr", nargs="*", default=None, help="NORAD catalog numbers (overrides --preset)")
     parser.add_argument("--group", nargs="*", default=None, help="CelesTrak groups, e.g. STATIONS WEATHER (overrides --preset)")

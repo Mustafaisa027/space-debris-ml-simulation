@@ -10,11 +10,11 @@ from pathlib import Path
 
 
 DEFAULT_EXPERIMENT_CONFIG = Path("config/experiment_60_days.json")
-# Active claim-eligible experiment. v3 re-anchors v2's collection window to
-# exclude a day-0 TLE-feed cold-start (see config/experiment_10_days_v3.json).
-# v2 is retained as pilot/audit only and is intentionally no longer
-# claim-eligible, mirroring how the 60-day v1 archive became pilot for v2.
-ACTIVE_EXPERIMENT_CONFIG = Path("config/experiment_10_days_v3.json")
+# Active prospective confirmation experiment. v5 keeps prior cohorts isolated
+# and separates scientific slot width from provider-request cadence.
+# v2/v3 are retained as pilot/audit only and are intentionally not registered
+# as claim-eligible inputs for the independent v5 confirmation run.
+ACTIVE_EXPERIMENT_CONFIG = Path("config/experiment_15_days_v5.json")
 PILOT_EXPERIMENT_CONFIG = Path("config/experiment_10_days_v2.json")
 CLAIM_ELIGIBLE_EXPERIMENT_CONFIGS = (
     DEFAULT_EXPERIMENT_CONFIG,
@@ -91,6 +91,7 @@ class ExperimentConfig:
     config_sha256: str
     duration_days: float
     poll_interval_hours: float
+    minimum_provider_poll_interval_hours: float
     provider: str
     preset: str
     catalog_version: str
@@ -193,6 +194,12 @@ def load_experiment_config(path: str | Path = DEFAULT_EXPERIMENT_CONFIG) -> Expe
             config_sha256=hashlib.sha256(canonical_config).hexdigest(),
             duration_days=float(raw["duration_days"]),
             poll_interval_hours=float(raw["poll_interval_hours"]),
+            minimum_provider_poll_interval_hours=float(
+                raw.get(
+                    "minimum_provider_poll_interval_hours",
+                    raw["poll_interval_hours"],
+                )
+            ),
             provider=str(raw.get("provider", "auto")),
             preset=str(query["preset"]),
             catalog_version=str(
@@ -366,7 +373,16 @@ def load_experiment_config(path: str | Path = DEFAULT_EXPERIMENT_CONFIG) -> Expe
     if config.duration_days <= 0:
         raise ValueError("duration_days must be positive")
     if config.poll_interval_hours < 2:
-        raise ValueError("poll_interval_hours must be at least 2 to respect provider cadence")
+        raise ValueError("poll_interval_hours must be at least 2")
+    if config.minimum_provider_poll_interval_hours < 2:
+        raise ValueError(
+            "minimum_provider_poll_interval_hours must be at least 2"
+        )
+    if config.minimum_provider_poll_interval_hours > config.poll_interval_hours:
+        raise ValueError(
+            "minimum_provider_poll_interval_hours cannot exceed the scientific "
+            "poll_interval_hours"
+        )
     if config.provider not in {"auto", "celestrak", "space-track"}:
         raise ValueError(f"Unsupported provider: {config.provider}")
     if config.max_objects < 2:
@@ -385,6 +401,7 @@ def load_experiment_config(path: str | Path = DEFAULT_EXPERIMENT_CONFIG) -> Expe
     numeric_values = [
         config.duration_days,
         config.poll_interval_hours,
+        config.minimum_provider_poll_interval_hours,
         config.max_objects,
         config.horizon_minutes,
         config.step_minutes,
@@ -446,9 +463,12 @@ def load_experiment_config(path: str | Path = DEFAULT_EXPERIMENT_CONFIG) -> Expe
     ):
         raise ValueError("collection_window fields must be configured together")
     if config.collection_start_utc is not None:
-        if config.collection_slot_anchor_basis != "github_actions_cron_17_even_utc":
+        if config.collection_slot_anchor_basis not in {
+            "github_actions_cron_17_even_utc",
+            "github_actions_multi_cron_utc",
+        }:
             raise ValueError(
-                "collection_window.slot_anchor_basis must identify the frozen GitHub cron anchor"
+                "collection_window.slot_anchor_basis must identify a frozen GitHub cron anchor"
             )
         if config.collection_slot_timestamp_field != "snapshot_utc":
             raise ValueError(

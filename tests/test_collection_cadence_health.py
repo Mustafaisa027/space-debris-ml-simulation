@@ -7,6 +7,7 @@ import pandas as pd
 import pytest
 
 from collection_cadence_health import (
+    cadence_report_passes,
     VerifiedObservation,
     cadence_health,
     scientific_collection_progress,
@@ -28,6 +29,34 @@ def test_cadence_health_fails_after_frozen_gap_without_bundle():
     assert report["status"] == "stale"
     assert report["healthy"] is False
     assert report["metric_role"] == "operational_liveness_only"
+
+
+def test_cadence_report_blocks_finalization_when_scientific_gate_fails():
+    active = {
+        "healthy": True,
+        "scientific_progress": {
+            "final_gate_evaluated": False,
+            "final_gate_pass": False,
+        },
+    }
+    failed_final = {
+        "healthy": True,
+        "scientific_progress": {
+            "final_gate_evaluated": True,
+            "final_gate_pass": False,
+        },
+    }
+    passed_final = {
+        "healthy": True,
+        "scientific_progress": {
+            "final_gate_evaluated": True,
+            "final_gate_pass": True,
+        },
+    }
+
+    assert cadence_report_passes(active) is True
+    assert cadence_report_passes(failed_final) is False
+    assert cadence_report_passes(passed_final) is True
 
 
 def test_cadence_health_uses_latest_schema_two_manifest(tmp_path):
