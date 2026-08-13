@@ -276,6 +276,12 @@ history, snapshot-only features, chronological cutoff, and held-out pair
 assignment while marking every artifact `claim_eligible=false`. These
 exploratory outputs do not relax or replace the frozen v3 result.
 
+An English technical-paper draft built strictly around that exploratory
+evidence is available at
+[`docs/IAC_TECHNICAL_PAPER_DRAFT.md`](docs/IAC_TECHNICAL_PAPER_DRAFT.md). It
+retains the failed-gate disclosure, reports the negative comparison result, and
+does not make the unsupported confirmatory claims from the accepted abstract.
+
 Before exact TCA refinement, the maintained pipeline applies a conservative
 coarse screen from `space_debris.encounters`. On a separate vectorized 30-second grid,
 the screen uses twice Earth-surface escape speed (about 22.36 km/s relative),
