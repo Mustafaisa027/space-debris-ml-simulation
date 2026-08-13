@@ -63,6 +63,24 @@ def test_slot_guard_allows_empty_slot_at_exact_minimum_poll_interval():
     assert report["seconds_until_next_poll"] == 0.0
 
 
+def test_v5_separates_scientific_slot_width_from_provider_poll_floor():
+    config = load_experiment_config("config/experiment_15_days_v5.json")
+    start = datetime.fromisoformat(config.collection_start_utc.replace("Z", "+00:00"))
+    late_previous_slot_fetch = start + timedelta(hours=2, minutes=50)
+
+    report = slot_guard(
+        config,
+        [late_previous_slot_fetch],
+        late_previous_slot_fetch + timedelta(hours=2),
+    )
+
+    assert report["current_slot"] == 1
+    assert report["scientific_slot_interval_hours"] == 3.0
+    assert report["minimum_poll_interval_hours"] == 2.0
+    assert report["collect"] is True
+    assert report["status"] == "collect"
+
+
 def test_slot_guard_is_closed_outside_window():
     config = _config()
     start = datetime.fromisoformat(config.collection_start_utc.replace("Z", "+00:00"))

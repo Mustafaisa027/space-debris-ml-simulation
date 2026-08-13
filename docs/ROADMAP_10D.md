@@ -1,5 +1,10 @@
 # 10 Günlük Yol Haritası — IAC 114764 Bildirisine Giden Yol
 
+> **Arşiv notu (2026-08-07):** Bu belge tamamlanmış v2/v3 operasyon planını
+> korur; aktif talimat değildir. Aktif bağımsız doğrulama deneyi
+> `iac26-15d-v5` ve bağlayıcı protokol `docs/EXPERIMENT_15D_V5.md` içindedir.
+> v2/v3 verileri v5 ile havuzlanmaz.
+
 **Toplama penceresi:** `2026-07-26T00:17:00Z → 2026-08-05T00:17:00Z`
 **Deney:** `iac26-10d-v3`, 2 saatlik cadence, 120 slot, 75 NORAD ID (`iac26-leo-mixed-75-v2`)
 **Kritik yol:** Gerçek TLE toplama = tek darboğaz. Kod hazır; kısaltılamaz.

@@ -31,10 +31,10 @@ def test_accepted_abstract_contract_is_bound_to_exact_pdf_digest():
     )
 
 
-def test_abstract_methods_are_present_in_claim_eligible_v3_pipeline():
+def test_abstract_methods_are_present_in_claim_eligible_v5_pipeline():
     contract = _contract()
     requirements = contract["implementation_requirements"]
-    config = load_experiment_config("config/experiment_10_days_v3.json")
+    config = load_experiment_config("config/experiment_15_days_v5.json")
     pair_fields = set(PairResult.__dataclass_fields__)
     model_names = set(_build_models(scale_pos_weight=1.0))
 
@@ -66,7 +66,7 @@ def test_abstract_result_language_remains_fail_closed():
     )
 
 
-def test_operator_documentation_matches_active_v3_contract():
+def test_operator_documentation_matches_active_v5_contract():
     collection_guide = Path("docs/GITHUB_DATA_COLLECTION.md").read_text(
         encoding="utf-8"
     )
@@ -75,10 +75,10 @@ def test_operator_documentation_matches_active_v3_contract():
 
     for required_text in (
         "minutes `07`, `17`, `37` and `47` of every UTC hour",
-        "requires two elapsed hours since the",
+        "separately requires two elapsed hours",
         "manifest schema 3",
-        "config/experiment_10_days_v3.json",
-        "2026-07-26T00:17:00Z",
+        "config/experiment_15_days_v5.json",
+        "2026-08-16T00:17:00Z",
         "108 of 120 slots",
         "at least 30% unique TLE hashes",
         "more than six consecutive bins",
@@ -94,10 +94,16 @@ def test_operator_documentation_matches_active_v3_contract():
     ):
         assert stale_active_instruction not in collection_guide
 
-    assert "`iac26-10d-v3` accumulated history" in plotting_guide
+    assert "`iac26-15d-v5` accumulated history" in plotting_guide
     assert "Final IAC figures should use the 60-day history" not in plotting_guide
-    assert "active 10-day frozen-cohort protocol" in readme
+    assert "Active claim-eligible experiment (15-day v5)" in readme
     assert "60-day frozen-cohort protocol below" not in readme
+    v5_protocol = Path("docs/EXPERIMENT_15D_V5.md").read_text(encoding="utf-8")
+    assert "v2 and v3 bundles" in v5_protocol
+    assert "never pooled" in v5_protocol
+    assert "three-hour slot" in v5_protocol
+    assert "Provider request floor: two elapsed hours" in v5_protocol
+    assert "108/120 slots" in v5_protocol
     v3_protocol = Path("docs/EXPERIMENT_10D_V3.md").read_text(encoding="utf-8")
     assert "Provider-request spacing incident (corrected 2026-07-31)" in v3_protocol
     assert "29 sub-two-hour intervals before" in v3_protocol

@@ -98,20 +98,18 @@ reproduce the active 10-day frozen-cohort protocol or its chronological
 train/test split; use these commands to exercise the pipeline against live
 data, not to reproduce the paper's headline result.
 
-## Active claim-eligible experiment (10-day v3)
+## Active claim-eligible experiment (15-day v5)
 
-The active frozen protocol is `iac26-10d-v3`, running from
-2026-07-26T00:17:00Z through 2026-08-05T00:17:00Z. It contains 120 half-open
-two-hour slots, requires 90% coverage, and stores schema-3 bundles under
-`experiments/iac26-10d-v3/collections/`. Exact experiment/config/catalogue and
-simulation bindings are verified before import. v3 re-anchors the earlier
-`iac26-10d-v2` window (opened 2026-07-24) on collection day 1 to exclude an
-initial TLE-feed cold-start that permanently breached the frozen
-`max_identical_tle_hash_run_bins <= 6` gate; the catalogue, seeds, and every
-quality gate are otherwise identical to v2. The 60-day v1 and the 10-day v2
-archives are both retained as pilot/audit evidence only and are never pooled
-into v3 or used for a publication claim. See
-[`docs/EXPERIMENT_10D_V3.md`](docs/EXPERIMENT_10D_V3.md).
+The prospective frozen protocol is `iac26-15d-v5`, running from
+2026-08-16T00:17:00Z through 2026-08-31T00:17:00Z. It contains 120 half-open
+three-hour slots, requires 90% coverage, and stores schema-3 bundles under
+`experiments/iac26-15d-v5/collections/`. Exact experiment/config/catalogue and
+simulation bindings are verified before import. The scientific slot width is
+separate from the unchanged two-hour provider-request floor, adding scheduler
+slack without increasing request frequency or lowering any quality gate. v1,
+v2 and v3 remain separate immutable pilot/audit archives and are never pooled
+into v5. See
+[`docs/EXPERIMENT_15D_V5.md`](docs/EXPERIMENT_15D_V5.md).
 
 A single snapshot yields very few conjunctions, so no classifier can reliably
 beat the fixed-distance baseline on it — that is a statistical fact, not a code
@@ -123,17 +121,17 @@ collector enforces this as a floor.
 # one cycle
 python src/collect_observations.py --once
 
-# one active-v3 cycle (normally GitHub Actions performs this)
-python src/collect_observations.py --once --config config/experiment_10_days_v3.json
+# one active-v5 cycle (normally GitHub Actions performs this)
+python src/collect_observations.py --once --config config/experiment_15_days_v5.json
 
 # verify/import the GitHub archive, then rebuild corrected-TCA history
 git fetch origin data-collection
 git worktree add ../space-debris-data origin/data-collection
-python src/import_collection_archive.py ../space-debris-data --config config/experiment_10_days_v3.json
-python src/resimulate_snapshots.py --config config/experiment_10_days_v3.json --workers 4
+python src/import_collection_archive.py ../space-debris-data --config config/experiment_15_days_v5.json
+python src/resimulate_snapshots.py --config config/experiment_15_days_v5.json --workers 4
 
 # pair-held-out, time-ordered evaluation over corrected-TCA history
-python src/train_from_history.py --config config/experiment_10_days_v3.json
+python src/train_from_history.py --config config/experiment_15_days_v5.json
 ```
 
 After the frozen window closes, the same fail-closed sequence is available as
@@ -149,7 +147,7 @@ resimulations, and produces no publication claim unless every downstream
 quality and evidence gate passes.
 
 The active training command uses the corrected frozen-cohort
-`conjunction_observations_resimulated_iac26_75_v2.csv`, not the live collector
+`conjunction_observations_resimulated_iac26_75_v5.csv`, not the live collector
 history or the older mixed 5/43/75-object archive. The claim-eligible primary
 experiment is pre-specified XGBoost using only six quantities available at the
 observation snapshot: current distance, altitude difference, maximum TLE age,
@@ -225,26 +223,27 @@ bundles to a separate `data-collection` branch. Setup instructions are in
 [`docs/GITHUB_DATA_COLLECTION.md`](docs/GITHUB_DATA_COLLECTION.md).
 
 The companion cadence-health workflow verifies the newest schema-3
-bundle manifest every two hours and fails after the frozen six-hour gap limit.
+bundle manifest every three hours and fails after the frozen six-hour gap limit.
 This is an operational alert only; publication coverage continues to use
 snapshot timestamps and the frozen 120-slot definition below.
 
 The final collection interval is frozen in the experiment config and anchored
-to its pre-specified `00:17Z` start. GitHub is asked to run at `:17` and `:47`
-every hour, providing four delivery opportunities inside each two-hour
-scientific slot. The archive-backed slot guard permits at most one actual
-CelesTrak poll per slot. Coverage is measured over 120
-half-open two-hour bins using each bundle's recorded `snapshot_utc`; retries
+to its pre-specified `00:17Z` start. GitHub is asked to run at `:07`, `:17`,
+`:37` and `:47` every hour, providing twelve delivery opportunities inside
+each three-hour scientific slot. The archive-backed slot guard permits at most
+one actual CelesTrak poll per slot and retains a separate two-hour provider
+request floor. Coverage is measured over 120 half-open three-hour bins using
+each bundle's recorded `snapshot_utc`; retries
 cannot inflate it, at least 90% of slots must be present, the actual timestamp
 gap (including window endpoints) may not exceed six hours, at least 30% of
 occupied bins must have distinct TLE hashes, and an identical-hash run may not
 exceed six bins. The diversity threshold was frozen from the v1 pilot before
 v2 collection and is not outcome-tuned.
 
-`config/experiment_10_days_v3.json` is authoritative for active collection,
+`config/experiment_15_days_v5.json` is authoritative for active collection,
 simulation thresholds, the `iac26-leo-mixed-75-v2` cohort, and report paths.
-`config/experiment_10_days_v2.json` (pilot) and `experiment_60_days.json`
-remain immutable for v2/v1 audit replay.
+`config/experiment_10_days_v3.json`, `config/experiment_10_days_v2.json`
+and `experiment_60_days.json` remain immutable for v3/v2/v1 audit replay.
 Exploratory tools may accept alternate configs, but the claim-eligible
 `train_from_history.py` rejects every unregistered config path. Changing
 the frozen protocol requires a new versioned experiment and collection window;
@@ -253,10 +252,10 @@ for explicit one-off experiments, and those values are recorded in provenance.
 
 GitHub runs scheduled workflows only from the repository's default branch.
 Therefore `.github/workflows/collect_observations.yml` must be merged into
-`main` before the two-hour collector can start automatically. After merging,
+`main` before the v5 collector can start automatically. After merging,
 enable Actions if necessary, trigger one manual smoke run, and verify that the
 `data-collection` branch receives a new immutable
-`experiments/iac26-10d-v3/collections/github-run-*` bundle. Keeping the
+`experiments/iac26-15d-v5/collections/github-run-*` bundle. Keeping the
 workflow only on a feature branch does not start the experiment.
 
 `train_from_history.py` assigns canonical object pairs deterministically with
