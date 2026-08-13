@@ -268,6 +268,15 @@ The configured publication gate also requires minimum positive support across
 rows, independent catalogue pairs, and snapshots; insufficient data produces a
 `not_enough_data` report instead of an unstable model claim.
 
+The completed v3 archive did not pass its frozen cadence-quality gates, so its
+canonical result is `not_enough_data` and no publication claim was produced.
+For transparent pilot/model-development use, the separate
+[`docs/EXPLORATORY_V3_RESULTS.md`](docs/EXPLORATORY_V3_RESULTS.md) report and
+`src/exploratory_compare.py` entry point preserve the same corrected-TCA
+history, snapshot-only features, chronological cutoff, and held-out pair
+assignment while marking every artifact `claim_eligible=false`. These
+exploratory outputs do not relax or replace the frozen v3 result.
+
 Before exact TCA refinement, the maintained pipeline applies a conservative
 coarse screen from `space_debris.encounters`. On a separate vectorized 30-second grid,
 the screen uses twice Earth-surface escape speed (about 22.36 km/s relative),
