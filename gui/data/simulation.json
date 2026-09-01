@@ -1,0 +1,1059 @@
+{
+  "schema_version": 1,
+  "paper": {
+    "paper_code": "IAC-26-A6.IP.6",
+    "title": "Machine Learning-Based Simulation Approach for Assessing Space Debris Collision Risk in Low Earth Orbit",
+    "author": "Mustafa İsa Oruçtutan",
+    "evidence_status": "exploratory",
+    "counts": {
+      "verified_snapshots": 97,
+      "candidate_observations": 19018,
+      "proxy_positive_observations": 1469,
+      "held_out_observations": 2795,
+      "held_out_positive_observations": 223,
+      "active_catalog_pairs": 1656,
+      "held_out_catalog_pairs": 361
+    },
+    "quality_gates": [
+      {
+        "key": "coverage",
+        "label": "Snapshot coverage",
+        "value": 80.833,
+        "unit": "%",
+        "requirement": ">= 90%",
+        "passed": false
+      },
+      {
+        "key": "gap",
+        "label": "Maximum snapshot gap",
+        "value": 16.844,
+        "unit": "h",
+        "requirement": "<= 6 h",
+        "passed": false
+      },
+      {
+        "key": "identical_run",
+        "label": "Longest identical-input run",
+        "value": 8,
+        "unit": "bins",
+        "requirement": "<= 6 bins",
+        "passed": false
+      }
+    ],
+    "models": [
+      {
+        "key": "distance",
+        "label": "Distance comparator",
+        "pr_auc": 0.725,
+        "f1": 0.51,
+        "recall": 0.386
+      },
+      {
+        "key": "logistic",
+        "label": "Logistic regression",
+        "pr_auc": 0.385,
+        "f1": 0.283,
+        "recall": 0.839
+      },
+      {
+        "key": "decision_tree",
+        "label": "Decision tree",
+        "pr_auc": 0.137,
+        "f1": 0.281,
+        "recall": 0.274
+      },
+      {
+        "key": "random_forest",
+        "label": "Random forest",
+        "pr_auc": 0.412,
+        "f1": 0.299,
+        "recall": 0.197
+      },
+      {
+        "key": "svm",
+        "label": "SVM",
+        "pr_auc": 0.418,
+        "f1": 0.406,
+        "recall": 0.874
+      },
+      {
+        "key": "xgboost",
+        "label": "XGBoost",
+        "pr_auc": 0.367,
+        "f1": 0.396,
+        "recall": 0.439
+      },
+      {
+        "key": "lightgbm",
+        "label": "LightGBM",
+        "pr_auc": 0.408,
+        "f1": 0.438,
+        "recall": 0.623
+      }
+    ]
+  },
+  "replay": {
+    "label": "Local validation artifact",
+    "not_to_scale": true,
+    "source": "outputs/catalog_75_validation_pipeline/identified_conjunctions.csv",
+    "source_metadata": {
+      "generated_utc": "2026-07-16T15:20:29Z",
+      "git_commit": "c913a99",
+      "source": "tle=outputs\\catalog_leo_mixed_75_validation.txt",
+      "config": "horizon=720min step=5min screening_step=30.0s label_threshold_km=50.0 label_relative_velocity_km_s=10.0 candidate_threshold_km=200.0 fixed_threshold_km=25.0"
+    },
+    "distance_series_source": "outputs/catalog_75_validation_pipeline/top_pair_distance_timeseries.csv",
+    "distance_series_metadata": {},
+    "tle_source": null,
+    "scenarios": [
+      {
+        "id": "encounter-1",
+        "label": "AURA (28376) × COSMOS 2251 DEB (33825)",
+        "object_1": "AURA",
+        "object_2": "COSMOS 2251 DEB",
+        "catalog_id_1": "28376",
+        "catalog_id_2": "33825",
+        "snapshot_utc": "2026-07-16T15:09:36Z",
+        "tca_utc": "2026-07-16T15:49:51.281429Z",
+        "time_to_tca_min": 40.254690483,
+        "current_distance_km": 7488.867,
+        "min_distance_km": 14.6,
+        "relative_velocity_km_s": 14.924995,
+        "altitude_1_km": 693.272,
+        "altitude_2_km": 605.773,
+        "altitude_difference_km": 87.499,
+        "relative_radial_km": 14.6,
+        "relative_intrack_km": -0.006,
+        "relative_crosstrack_km": 0.036,
+        "approach_angle_deg": 0.503,
+        "risk_score": 1.9873063977,
+        "fixed_threshold_alarm": true,
+        "proxy_positive": true,
+        "synthetic": false,
+        "replay_label": "Validation snapshot replay",
+        "distance_series": [
+          {
+            "minute": 0.0,
+            "utc_iso": "2026-07-16T15:09:36Z",
+            "distance_km": 11939.625
+          },
+          {
+            "minute": 5.0,
+            "utc_iso": "2026-07-16T15:14:36Z",
+            "distance_km": 10415.589
+          },
+          {
+            "minute": 10.0,
+            "utc_iso": "2026-07-16T15:19:36Z",
+            "distance_km": 9039.917
+          },
+          {
+            "minute": 15.0,
+            "utc_iso": "2026-07-16T15:24:36Z",
+            "distance_km": 8531.194
+          },
+          {
+            "minute": 20.0,
+            "utc_iso": "2026-07-16T15:29:36Z",
+            "distance_km": 9229.207
+          },
+          {
+            "minute": 25.0,
+            "utc_iso": "2026-07-16T15:34:36Z",
+            "distance_km": 10677.345
+          },
+          {
+            "minute": 30.0,
+            "utc_iso": "2026-07-16T15:39:36Z",
+            "distance_km": 12160.794
+          },
+          {
+            "minute": 35.0,
+            "utc_iso": "2026-07-16T15:44:36Z",
+            "distance_km": 13170.945
+          },
+          {
+            "minute": 40.0,
+            "utc_iso": "2026-07-16T15:49:36Z",
+            "distance_km": 13443.715
+          },
+          {
+            "minute": 40.254690483,
+            "utc_iso": "2026-07-16T15:49:51.281429Z",
+            "distance_km": 14.6
+          },
+          {
+            "minute": 45.0,
+            "utc_iso": "2026-07-16T15:54:36Z",
+            "distance_km": 12917.616
+          },
+          {
+            "minute": 50.0,
+            "utc_iso": "2026-07-16T15:59:36Z",
+            "distance_km": 11720.907
+          },
+          {
+            "minute": 55.0,
+            "utc_iso": "2026-07-16T16:04:36Z",
+            "distance_km": 10193.519
+          },
+          {
+            "minute": 60.0,
+            "utc_iso": "2026-07-16T16:09:36Z",
+            "distance_km": 8922.68
+          },
+          {
+            "minute": 65.0,
+            "utc_iso": "2026-07-16T16:14:36Z",
+            "distance_km": 8604.266
+          },
+          {
+            "minute": 70.0,
+            "utc_iso": "2026-07-16T16:19:36Z",
+            "distance_km": 9452.507
+          },
+          {
+            "minute": 75.0,
+            "utc_iso": "2026-07-16T16:24:36Z",
+            "distance_km": 10934.817
+          },
+          {
+            "minute": 80.0,
+            "utc_iso": "2026-07-16T16:29:36Z",
+            "distance_km": 12364.651
+          },
+          {
+            "minute": 85.0,
+            "utc_iso": "2026-07-16T16:34:36Z",
+            "distance_km": 13276.843
+          },
+          {
+            "minute": 90.0,
+            "utc_iso": "2026-07-16T16:39:36Z",
+            "distance_km": 13437.914
+          },
+          {
+            "minute": 95.0,
+            "utc_iso": "2026-07-16T16:44:36Z",
+            "distance_km": 12808.718
+          },
+          {
+            "minute": 100.0,
+            "utc_iso": "2026-07-16T16:49:36Z",
+            "distance_km": 11538.701
+          },
+          {
+            "minute": 105.0,
+            "utc_iso": "2026-07-16T16:54:36Z",
+            "distance_km": 9994.938
+          },
+          {
+            "minute": 110.0,
+            "utc_iso": "2026-07-16T16:59:36Z",
+            "distance_km": 8796.474
+          },
+          {
+            "minute": 115.0,
+            "utc_iso": "2026-07-16T17:04:36Z",
+            "distance_km": 8627.549
+          },
+          {
+            "minute": 120.0,
+            "utc_iso": "2026-07-16T17:09:36Z",
+            "distance_km": 9602.88
+          },
+          {
+            "minute": 125.0,
+            "utc_iso": "2026-07-16T17:14:36Z",
+            "distance_km": 11121.665
+          },
+          {
+            "minute": 130.0,
+            "utc_iso": "2026-07-16T17:19:36Z",
+            "distance_km": 12507.838
+          },
+          {
+            "minute": 135.0,
+            "utc_iso": "2026-07-16T17:24:36Z",
+            "distance_km": 13326.325
+          },
+          {
+            "minute": 140.0,
+            "utc_iso": "2026-07-16T17:29:36Z",
+            "distance_km": 13373.348
+          },
+          {
+            "minute": 145.0,
+            "utc_iso": "2026-07-16T17:34:36Z",
+            "distance_km": 12640.349
+          },
+          {
+            "minute": 150.0,
+            "utc_iso": "2026-07-16T17:39:36Z",
+            "distance_km": 11311.006
+          },
+          {
+            "minute": 155.0,
+            "utc_iso": "2026-07-16T17:44:36Z",
+            "distance_km": 9791.532
+          },
+          {
+            "minute": 160.0,
+            "utc_iso": "2026-07-16T17:49:36Z",
+            "distance_km": 8728.555
+          },
+          {
+            "minute": 165.0,
+            "utc_iso": "2026-07-16T17:54:36Z",
+            "distance_km": 8752.21
+          },
+          {
+            "minute": 170.0,
+            "utc_iso": "2026-07-16T17:59:36Z",
+            "distance_km": 9846.34
+          },
+          {
+            "minute": 175.0,
+            "utc_iso": "2026-07-16T18:04:36Z",
+            "distance_km": 11369.974
+          },
+          {
+            "minute": 180.0,
+            "utc_iso": "2026-07-16T18:09:36Z",
+            "distance_km": 12686.532
+          },
+          {
+            "minute": 185.0,
+            "utc_iso": "2026-07-16T18:14:36Z",
+            "distance_km": 13400.928
+          },
+          {
+            "minute": 190.0,
+            "utc_iso": "2026-07-16T18:19:36Z",
+            "distance_km": 13336.892
+          },
+          {
+            "minute": 195.0,
+            "utc_iso": "2026-07-16T18:24:36Z",
+            "distance_km": 12507.152
+          },
+          {
+            "minute": 200.0,
+            "utc_iso": "2026-07-16T18:29:36Z",
+            "distance_km": 11117.523
+          },
+          {
+            "minute": 205.0,
+            "utc_iso": "2026-07-16T18:34:36Z",
+            "distance_km": 9603.746
+          },
+          {
+            "minute": 210.0,
+            "utc_iso": "2026-07-16T18:39:36Z",
+            "distance_km": 8639.682
+          },
+          {
+            "minute": 215.0,
+            "utc_iso": "2026-07-16T18:44:36Z",
+            "distance_km": 8817.732
+          },
+          {
+            "minute": 220.0,
+            "utc_iso": "2026-07-16T18:49:36Z",
+            "distance_km": 10015.804
+          },
+          {
+            "minute": 225.0,
+            "utc_iso": "2026-07-16T18:54:36Z",
+            "distance_km": 11550.853
+          },
+          {
+            "minute": 230.0,
+            "utc_iso": "2026-07-16T18:59:36Z",
+            "distance_km": 12806.968
+          },
+          {
+            "minute": 235.0,
+            "utc_iso": "2026-07-16T19:04:36Z",
+            "distance_km": 13419.326
+          },
+          {
+            "minute": 240.0,
+            "utc_iso": "2026-07-16T19:09:36Z",
+            "distance_km": 13241.286
+          },
+          {
+            "minute": 245.0,
+            "utc_iso": "2026-07-16T19:14:36Z",
+            "distance_km": 12316.898
+          },
+          {
+            "minute": 250.0,
+            "utc_iso": "2026-07-16T19:19:36Z",
+            "distance_km": 10887.564
+          },
+          {
+            "minute": 255.0,
+            "utc_iso": "2026-07-16T19:24:36Z",
+            "distance_km": 9428.138
+          },
+          {
+            "minute": 260.0,
+            "utc_iso": "2026-07-16T19:29:36Z",
+            "distance_km": 8625.837
+          },
+          {
+            "minute": 265.0,
+            "utc_iso": "2026-07-16T19:34:36Z",
+            "distance_km": 8986.794
+          },
+          {
+            "minute": 270.0,
+            "utc_iso": "2026-07-16T19:39:36Z",
+            "distance_km": 10269.911
+          },
+          {
+            "minute": 275.0,
+            "utc_iso": "2026-07-16T19:44:36Z",
+            "distance_km": 11784.332
+          },
+          {
+            "minute": 280.0,
+            "utc_iso": "2026-07-16T19:49:36Z",
+            "distance_km": 12958.044
+          },
+          {
+            "minute": 285.0,
+            "utc_iso": "2026-07-16T19:54:36Z",
+            "distance_km": 13462.299
+          },
+          {
+            "minute": 290.0,
+            "utc_iso": "2026-07-16T19:59:36Z",
+            "distance_km": 13175.456
+          },
+          {
+            "minute": 295.0,
+            "utc_iso": "2026-07-16T20:04:36Z",
+            "distance_km": 12162.352
+          },
+          {
+            "minute": 300.0,
+            "utc_iso": "2026-07-16T20:09:36Z",
+            "distance_km": 10688.037
+          },
+          {
+            "minute": 305.0,
+            "utc_iso": "2026-07-16T20:14:36Z",
+            "distance_km": 9258.801
+          },
+          {
+            "minute": 310.0,
+            "utc_iso": "2026-07-16T20:19:36Z",
+            "distance_km": 8578.995
+          },
+          {
+            "minute": 315.0,
+            "utc_iso": "2026-07-16T20:24:36Z",
+            "distance_km": 9089.663
+          },
+          {
+            "minute": 320.0,
+            "utc_iso": "2026-07-16T20:29:36Z",
+            "distance_km": 10450.836
+          },
+          {
+            "minute": 325.0,
+            "utc_iso": "2026-07-16T20:34:36Z",
+            "distance_km": 11953.73
+          },
+          {
+            "minute": 330.0,
+            "utc_iso": "2026-07-16T20:39:36Z",
+            "distance_km": 13052.656
+          },
+          {
+            "minute": 335.0,
+            "utc_iso": "2026-07-16T20:44:36Z",
+            "distance_km": 13448.866
+          },
+          {
+            "minute": 340.0,
+            "utc_iso": "2026-07-16T20:49:36Z",
+            "distance_km": 13050.513
+          },
+          {
+            "minute": 345.0,
+            "utc_iso": "2026-07-16T20:54:36Z",
+            "distance_km": 11954.681
+          },
+          {
+            "minute": 350.0,
+            "utc_iso": "2026-07-16T20:59:36Z",
+            "distance_km": 10463.378
+          },
+          {
+            "minute": 355.0,
+            "utc_iso": "2026-07-16T21:04:36Z",
+            "distance_km": 9119.942
+          },
+          {
+            "minute": 360.0,
+            "utc_iso": "2026-07-16T21:09:36Z",
+            "distance_km": 8620.676
+          },
+          {
+            "minute": 365.0,
+            "utc_iso": "2026-07-16T21:14:36Z",
+            "distance_km": 9294.05
+          },
+          {
+            "minute": 370.0,
+            "utc_iso": "2026-07-16T21:19:36Z",
+            "distance_km": 10707.049
+          },
+          {
+            "minute": 375.0,
+            "utc_iso": "2026-07-16T21:24:36Z",
+            "distance_km": 12167.758
+          },
+          {
+            "minute": 380.0,
+            "utc_iso": "2026-07-16T21:29:36Z",
+            "distance_km": 13174.341
+          },
+          {
+            "minute": 385.0,
+            "utc_iso": "2026-07-16T21:34:36Z",
+            "distance_km": 13460.35
+          },
+          {
+            "minute": 390.0,
+            "utc_iso": "2026-07-16T21:39:36Z",
+            "distance_km": 12957.027
+          },
+          {
+            "minute": 395.0,
+            "utc_iso": "2026-07-16T21:44:36Z",
+            "distance_km": 11782.292
+          },
+          {
+            "minute": 400.0,
+            "utc_iso": "2026-07-16T21:49:36Z",
+            "distance_km": 10263.789
+          },
+          {
+            "minute": 405.0,
+            "utc_iso": "2026-07-16T21:54:36Z",
+            "distance_km": 8976.772
+          },
+          {
+            "minute": 410.0,
+            "utc_iso": "2026-07-16T21:59:36Z",
+            "distance_km": 8617.965
+          },
+          {
+            "minute": 415.0,
+            "utc_iso": "2026-07-16T22:04:36Z",
+            "distance_km": 9427.715
+          },
+          {
+            "minute": 420.0,
+            "utc_iso": "2026-07-16T22:09:36Z",
+            "distance_km": 10892.245
+          },
+          {
+            "minute": 425.0,
+            "utc_iso": "2026-07-16T22:14:36Z",
+            "distance_km": 12320.875
+          },
+          {
+            "minute": 430.0,
+            "utc_iso": "2026-07-16T22:19:36Z",
+            "distance_km": 13240.711
+          },
+          {
+            "minute": 435.0,
+            "utc_iso": "2026-07-16T22:24:36Z",
+            "distance_km": 13415.004
+          },
+          {
+            "minute": 440.0,
+            "utc_iso": "2026-07-16T22:29:36Z",
+            "distance_km": 12805.184
+          },
+          {
+            "minute": 445.0,
+            "utc_iso": "2026-07-16T22:34:36Z",
+            "distance_km": 11562.513
+          },
+          {
+            "minute": 450.0,
+            "utc_iso": "2026-07-16T22:39:36Z",
+            "distance_km": 10052.736
+          },
+          {
+            "minute": 455.0,
+            "utc_iso": "2026-07-16T22:44:36Z",
+            "distance_km": 8882.649
+          },
+          {
+            "minute": 460.0,
+            "utc_iso": "2026-07-16T22:49:36Z",
+            "distance_km": 8713.001
+          },
+          {
+            "minute": 465.0,
+            "utc_iso": "2026-07-16T22:54:36Z",
+            "distance_km": 9657.587
+          },
+          {
+            "minute": 470.0,
+            "utc_iso": "2026-07-16T22:59:36Z",
+            "distance_km": 11143.165
+          },
+          {
+            "minute": 475.0,
+            "utc_iso": "2026-07-16T23:04:36Z",
+            "distance_km": 12511.765
+          },
+          {
+            "minute": 480.0,
+            "utc_iso": "2026-07-16T23:09:36Z",
+            "distance_km": 13331.834
+          },
+          {
+            "minute": 485.0,
+            "utc_iso": "2026-07-16T23:14:36Z",
+            "distance_km": 13395.594
+          },
+          {
+            "minute": 490.0,
+            "utc_iso": "2026-07-16T23:19:36Z",
+            "distance_km": 12686.209
+          },
+          {
+            "minute": 495.0,
+            "utc_iso": "2026-07-16T23:24:36Z",
+            "distance_km": 11376.395
+          },
+          {
+            "minute": 500.0,
+            "utc_iso": "2026-07-16T23:29:36Z",
+            "distance_km": 9859.798
+          },
+          {
+            "minute": 505.0,
+            "utc_iso": "2026-07-16T23:34:36Z",
+            "distance_km": 8772.783
+          },
+          {
+            "minute": 510.0,
+            "utc_iso": "2026-07-16T23:39:36Z",
+            "distance_km": 8753.629
+          },
+          {
+            "minute": 515.0,
+            "utc_iso": "2026-07-16T23:44:36Z",
+            "distance_km": 9814.636
+          },
+          {
+            "minute": 520.0,
+            "utc_iso": "2026-07-16T23:49:36Z",
+            "distance_km": 11326.064
+          },
+          {
+            "minute": 525.0,
+            "utc_iso": "2026-07-16T23:54:36Z",
+            "distance_km": 12644.491
+          },
+          {
+            "minute": 530.0,
+            "utc_iso": "2026-07-16T23:59:36Z",
+            "distance_km": 13368.196
+          },
+          {
+            "minute": 535.0,
+            "utc_iso": "2026-07-17T00:04:36Z",
+            "distance_km": 13318.932
+          },
+          {
+            "minute": 540.0,
+            "utc_iso": "2026-07-17T00:09:36Z",
+            "distance_km": 12510.665
+          },
+          {
+            "minute": 545.0,
+            "utc_iso": "2026-07-17T00:14:36Z",
+            "distance_km": 11150.675
+          },
+          {
+            "minute": 550.0,
+            "utc_iso": "2026-07-17T00:19:36Z",
+            "distance_km": 9671.176
+          },
+          {
+            "minute": 555.0,
+            "utc_iso": "2026-07-17T00:24:36Z",
+            "distance_km": 8729.484
+          },
+          {
+            "minute": 560.0,
+            "utc_iso": "2026-07-17T00:29:36Z",
+            "distance_km": 8896.537
+          },
+          {
+            "minute": 565.0,
+            "utc_iso": "2026-07-17T00:34:36Z",
+            "distance_km": 10060.291
+          },
+          {
+            "minute": 570.0,
+            "utc_iso": "2026-07-17T00:39:36Z",
+            "distance_km": 11565.448
+          },
+          {
+            "minute": 575.0,
+            "utc_iso": "2026-07-17T00:44:36Z",
+            "distance_km": 12809.375
+          },
+          {
+            "minute": 580.0,
+            "utc_iso": "2026-07-17T00:49:36Z",
+            "distance_km": 13428.13
+          },
+          {
+            "minute": 585.0,
+            "utc_iso": "2026-07-17T00:54:36Z",
+            "distance_km": 13269.655
+          },
+          {
+            "minute": 590.0,
+            "utc_iso": "2026-07-17T00:59:36Z",
+            "distance_km": 12368.849
+          },
+          {
+            "minute": 595.0,
+            "utc_iso": "2026-07-17T01:04:36Z",
+            "distance_km": 10955.613
+          },
+          {
+            "minute": 600.0,
+            "utc_iso": "2026-07-17T01:09:36Z",
+            "distance_km": 9492.201
+          },
+          {
+            "minute": 605.0,
+            "utc_iso": "2026-07-17T01:14:36Z",
+            "distance_km": 8658.667
+          },
+          {
+            "minute": 610.0,
+            "utc_iso": "2026-07-17T01:19:36Z",
+            "distance_km": 8977.027
+          },
+          {
+            "minute": 615.0,
+            "utc_iso": "2026-07-17T01:24:36Z",
+            "distance_km": 10233.109
+          },
+          {
+            "minute": 620.0,
+            "utc_iso": "2026-07-17T01:29:36Z",
+            "distance_km": 11740.17
+          },
+          {
+            "minute": 625.0,
+            "utc_iso": "2026-07-17T01:34:36Z",
+            "distance_km": 12918.275
+          },
+          {
+            "minute": 630.0,
+            "utc_iso": "2026-07-17T01:39:36Z",
+            "distance_km": 13433.366
+          },
+          {
+            "minute": 635.0,
+            "utc_iso": "2026-07-17T01:44:36Z",
+            "distance_km": 13162.974
+          },
+          {
+            "minute": 640.0,
+            "utc_iso": "2026-07-17T01:49:36Z",
+            "distance_km": 12173.589
+          },
+          {
+            "minute": 645.0,
+            "utc_iso": "2026-07-17T01:54:36Z",
+            "distance_km": 10730.965
+          },
+          {
+            "minute": 650.0,
+            "utc_iso": "2026-07-17T01:59:36Z",
+            "distance_km": 9334.948
+          },
+          {
+            "minute": 655.0,
+            "utc_iso": "2026-07-17T02:04:36Z",
+            "distance_km": 8669.465
+          },
+          {
+            "minute": 660.0,
+            "utc_iso": "2026-07-17T02:09:36Z",
+            "distance_km": 9159.867
+          },
+          {
+            "minute": 665.0,
+            "utc_iso": "2026-07-17T02:14:36Z",
+            "distance_km": 10485.569
+          },
+          {
+            "minute": 670.0,
+            "utc_iso": "2026-07-17T02:19:36Z",
+            "distance_km": 11962.859
+          },
+          {
+            "minute": 675.0,
+            "utc_iso": "2026-07-17T02:24:36Z",
+            "distance_km": 13055.01
+          },
+          {
+            "minute": 680.0,
+            "utc_iso": "2026-07-17T02:29:36Z",
+            "distance_km": 13461.983
+          },
+          {
+            "minute": 685.0,
+            "utc_iso": "2026-07-17T02:34:36Z",
+            "distance_km": 13085.291
+          },
+          {
+            "minute": 690.0,
+            "utc_iso": "2026-07-17T02:39:36Z",
+            "distance_km": 12012.1
+          },
+          {
+            "minute": 695.0,
+            "utc_iso": "2026-07-17T02:44:36Z",
+            "distance_km": 10532.468
+          },
+          {
+            "minute": 700.0,
+            "utc_iso": "2026-07-17T02:49:36Z",
+            "distance_km": 9177.553
+          },
+          {
+            "minute": 705.0,
+            "utc_iso": "2026-07-17T02:54:36Z",
+            "distance_km": 8641.266
+          },
+          {
+            "minute": 710.0,
+            "utc_iso": "2026-07-17T02:59:36Z",
+            "distance_km": 9274.662
+          },
+          {
+            "minute": 715.0,
+            "utc_iso": "2026-07-17T03:04:36Z",
+            "distance_km": 10666.787
+          },
+          {
+            "minute": 720.0,
+            "utc_iso": "2026-07-17T03:09:36Z",
+            "distance_km": 12124.231
+          }
+        ]
+      },
+      {
+        "id": "encounter-2",
+        "label": "IRIDIUM 33 DEB (33953) × COSMOS 2251 DEB (33758)",
+        "object_1": "IRIDIUM 33 DEB",
+        "object_2": "COSMOS 2251 DEB",
+        "catalog_id_1": "33953",
+        "catalog_id_2": "33758",
+        "snapshot_utc": "2026-07-16T15:09:36Z",
+        "tca_utc": "2026-07-16T16:14:14.579198Z",
+        "time_to_tca_min": 64.642986633,
+        "current_distance_km": 11173.268,
+        "min_distance_km": 14.118,
+        "relative_velocity_km_s": 14.317166,
+        "altitude_1_km": 706.593,
+        "altitude_2_km": 716.094,
+        "altitude_difference_km": 9.501,
+        "relative_radial_km": 7.89,
+        "relative_intrack_km": 3.376,
+        "relative_crosstrack_km": 11.21,
+        "approach_angle_deg": 179.589,
+        "risk_score": 1.937143849,
+        "fixed_threshold_alarm": true,
+        "proxy_positive": true,
+        "synthetic": false,
+        "replay_label": "Validation snapshot replay",
+        "distance_series": []
+      },
+      {
+        "id": "encounter-3",
+        "label": "LANDSAT 8 (39084) × COSMOS 2251 DEB (33758)",
+        "object_1": "LANDSAT 8",
+        "object_2": "COSMOS 2251 DEB",
+        "catalog_id_1": "39084",
+        "catalog_id_2": "33758",
+        "snapshot_utc": "2026-07-16T15:09:36Z",
+        "tca_utc": "2026-07-17T00:19:24.680127Z",
+        "time_to_tca_min": 549.81133545,
+        "current_distance_km": 3600.294,
+        "min_distance_km": 11.311,
+        "relative_velocity_km_s": 11.672894,
+        "altitude_1_km": 696.865,
+        "altitude_2_km": 716.094,
+        "altitude_difference_km": 19.229,
+        "relative_radial_km": 8.768,
+        "relative_intrack_km": 4.381,
+        "relative_crosstrack_km": 5.645,
+        "approach_angle_deg": 173.085,
+        "risk_score": 1.2759063948,
+        "fixed_threshold_alarm": true,
+        "proxy_positive": true,
+        "synthetic": false,
+        "replay_label": "Validation snapshot replay",
+        "distance_series": []
+      },
+      {
+        "id": "encounter-4",
+        "label": "SENTINEL-1A (39634) × COSMOS 2251 DEB (33837)",
+        "object_1": "SENTINEL-1A",
+        "object_2": "COSMOS 2251 DEB",
+        "catalog_id_1": "39634",
+        "catalog_id_2": "33837",
+        "snapshot_utc": "2026-07-16T15:09:36Z",
+        "tca_utc": "2026-07-16T23:28:43.276123Z",
+        "time_to_tca_min": 499.121268717,
+        "current_distance_km": 3568.233,
+        "min_distance_km": 20.807,
+        "relative_velocity_km_s": 14.796998,
+        "altitude_1_km": 704.092,
+        "altitude_2_km": 715.742,
+        "altitude_difference_km": 11.65,
+        "relative_radial_km": 16.162,
+        "relative_intrack_km": 2.129,
+        "relative_crosstrack_km": -12.931,
+        "approach_angle_deg": 175.954,
+        "risk_score": 0.9293125098,
+        "fixed_threshold_alarm": true,
+        "proxy_positive": true,
+        "synthetic": false,
+        "replay_label": "Validation snapshot replay",
+        "distance_series": []
+      },
+      {
+        "id": "encounter-5",
+        "label": "IRIDIUM 33 DEB (33850) × COSMOS 2251 DEB (33766)",
+        "object_1": "IRIDIUM 33 DEB",
+        "object_2": "COSMOS 2251 DEB",
+        "catalog_id_1": "33850",
+        "catalog_id_2": "33766",
+        "snapshot_utc": "2026-07-16T15:09:36Z",
+        "tca_utc": "2026-07-16T17:01:17.902431Z",
+        "time_to_tca_min": 111.69837385,
+        "current_distance_km": 9293.914,
+        "min_distance_km": 30.976,
+        "relative_velocity_km_s": 14.629638,
+        "altitude_1_km": 760.592,
+        "altitude_2_km": 758.04,
+        "altitude_difference_km": 2.552,
+        "relative_radial_km": -25.838,
+        "relative_intrack_km": -3.475,
+        "relative_crosstrack_km": 16.728,
+        "approach_angle_deg": 179.686,
+        "risk_score": 0.8713058016,
+        "fixed_threshold_alarm": false,
+        "proxy_positive": true,
+        "synthetic": false,
+        "replay_label": "Validation snapshot replay",
+        "distance_series": []
+      },
+      {
+        "id": "encounter-6",
+        "label": "IRIDIUM 33 DEB (33776) × COSMOS 2251 DEB (33822)",
+        "object_1": "IRIDIUM 33 DEB",
+        "object_2": "COSMOS 2251 DEB",
+        "catalog_id_1": "33776",
+        "catalog_id_2": "33822",
+        "snapshot_utc": "2026-07-16T15:09:36Z",
+        "tca_utc": "2026-07-16T15:40:49.890851Z",
+        "time_to_tca_min": 31.231514183,
+        "current_distance_km": 13124.057,
+        "min_distance_km": 37.656,
+        "relative_velocity_km_s": 14.784503,
+        "altitude_1_km": 764.733,
+        "altitude_2_km": 866.085,
+        "altitude_difference_km": 101.351,
+        "relative_radial_km": -36.28,
+        "relative_intrack_km": 1.572,
+        "relative_crosstrack_km": -9.961,
+        "approach_angle_deg": 0.389,
+        "risk_score": 0.7682168644,
+        "fixed_threshold_alarm": false,
+        "proxy_positive": true,
+        "synthetic": false,
+        "replay_label": "Validation snapshot replay",
+        "distance_series": []
+      },
+      {
+        "id": "encounter-7",
+        "label": "IRIDIUM 33 DEB (33776) × COSMOS 2251 DEB (33758)",
+        "object_1": "IRIDIUM 33 DEB",
+        "object_2": "COSMOS 2251 DEB",
+        "catalog_id_1": "33776",
+        "catalog_id_2": "33758",
+        "snapshot_utc": "2026-07-16T15:09:36Z",
+        "tca_utc": "2026-07-17T00:47:57.056442Z",
+        "time_to_tca_min": 578.3509407,
+        "current_distance_km": 13247.089,
+        "min_distance_km": 27.339,
+        "relative_velocity_km_s": 14.744004,
+        "altitude_1_km": 764.733,
+        "altitude_2_km": 716.094,
+        "altitude_difference_km": 48.639,
+        "relative_radial_km": -27.217,
+        "relative_intrack_km": -0.589,
+        "relative_crosstrack_km": -2.505,
+        "approach_angle_deg": 5.056,
+        "risk_score": 0.6454130264,
+        "fixed_threshold_alarm": false,
+        "proxy_positive": true,
+        "synthetic": false,
+        "replay_label": "Validation snapshot replay",
+        "distance_series": []
+      },
+      {
+        "id": "encounter-8",
+        "label": "NOAA 20 (JPSS-1) (43013) × COSMOS 2251 DEB (33819)",
+        "object_1": "NOAA 20 (JPSS-1)",
+        "object_2": "COSMOS 2251 DEB",
+        "catalog_id_1": "43013",
+        "catalog_id_2": "33819",
+        "snapshot_utc": "2026-07-16T15:09:36Z",
+        "tca_utc": "2026-07-16T23:33:32.019102Z",
+        "time_to_tca_min": 503.9336517,
+        "current_distance_km": 1996.923,
+        "min_distance_km": 13.069,
+        "relative_velocity_km_s": 6.003825,
+        "altitude_1_km": 821.964,
+        "altitude_2_km": 820.844,
+        "altitude_difference_km": 1.121,
+        "relative_radial_km": 4.871,
+        "relative_intrack_km": 11.071,
+        "relative_crosstrack_km": 4.95,
+        "approach_angle_deg": 76.338,
+        "risk_score": 0.5972528296,
+        "fixed_threshold_alarm": true,
+        "proxy_positive": false,
+        "synthetic": false,
+        "replay_label": "Validation snapshot replay",
+        "distance_series": []
+      }
+    ]
+  },
+  "disclaimer": "Public TLE/SGP4 geometry without covariance or hard-body radius. The proxy label and risk score are not probability of collision (Pc)."
+}

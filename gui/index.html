@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#050a14">
+  <title>LEO Conjunction Lab · IAC-26-A6.IP.6</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell" id="appShell">
+    <header class="topbar">
+      <div class="brand-block">
+        <div class="orbit-mark" aria-hidden="true"><span></span></div>
+        <div>
+          <p class="eyebrow">IAC-26-A6.IP.6 · Evidence replay</p>
+          <h1>LEO Conjunction Lab</h1>
+        </div>
+      </div>
+      <div class="header-actions">
+        <span class="status-chip neutral"><span class="status-dot"></span>Offline replay</span>
+        <span class="status-chip warning">Exploratory</span>
+        <button class="icon-button" id="posterModeButton" type="button" aria-pressed="false" title="Toggle poster mode">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H4zM9 20h6M12 16v4"/></svg>
+          <span>Poster mode</span>
+        </button>
+        <button class="icon-button compact" id="fullScreenButton" type="button" title="Full screen" aria-label="Enter full screen">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <div class="claim-ribbon" role="status">
+      <strong>EXPLORATORY · CONFIRMATORY GATE CLOSED</strong>
+      <span>Results replay a frozen research archive; they are not an operational collision warning.</span>
+    </div>
+
+    <main class="workspace">
+      <aside class="control-rail" aria-label="Simulation controls">
+        <section class="rail-section">
+          <div class="section-heading">
+            <span>Replay source</span><span class="source-light" aria-hidden="true"></span>
+          </div>
+          <label class="field-label" for="scenarioSelect">Archived encounter</label>
+          <select id="scenarioSelect" class="select-control"></select>
+          <div class="source-card">
+            <span id="replayLabel">Validation snapshot replay</span>
+            <code id="snapshotCode">—</code>
+          </div>
+        </section>
+
+        <section class="rail-section">
+          <div class="section-heading"><span>View</span></div>
+          <div class="segmented-control" role="group" aria-label="Visualization view">
+            <button type="button" class="segment active" data-view="orbit" aria-pressed="true">Orbit</button>
+            <button type="button" class="segment" data-view="encounter" aria-pressed="false">Encounter plane</button>
+          </div>
+        </section>
+
+        <section class="rail-section">
+          <div class="section-heading"><span>Playback</span></div>
+          <div class="speed-grid" role="group" aria-label="Playback speed">
+            <button type="button" class="speed-button" data-speed="0.5">0.5×</button>
+            <button type="button" class="speed-button active" data-speed="1">1×</button>
+            <button type="button" class="speed-button" data-speed="2">2×</button>
+            <button type="button" class="speed-button" data-speed="4">4×</button>
+          </div>
+        </section>
+
+        <section class="rail-section threshold-section">
+          <div class="section-heading"><span>Fixed alarm</span><span>Paper setting</span></div>
+          <div class="threshold-lock">
+            <span class="threshold-value">25</span><span>km</span>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10V8a5 5 0 0110 0v2M6 10h12v10H6z"/></svg>
+          </div>
+          <p>The manuscript operating point is locked. PR-AUC uses continuous −minimum-distance ranking.</p>
+        </section>
+
+        <section class="rail-section method-mini">
+          <div class="section-heading"><span>Archive snapshot</span></div>
+          <dl>
+            <div><dt>Objects</dt><dd>75</dd></div>
+            <div title="C(75,2) combinatorial pairs prior to coarse elimination"><dt>Pairs screened</dt><dd>2,775</dd></div>
+            <div title="Unique catalog pairs with at least one candidate observation — the paper's headline pair count"><dt>Active pairs</dt><dd>1,656</dd></div>
+            <div><dt>Horizon</dt><dd>12 h</dd></div>
+            <div><dt>Refinement</dt><dd>5 min + TCA</dd></div>
+          </dl>
+        </section>
+      </aside>
+
+      <section class="simulation-column">
+        <div class="stage-card">
+          <div class="stage-toolbar">
+            <div>
+              <span class="stage-kicker">SCHEMATIC · GEOMETRY-DRIVEN · NOT TO SCALE</span>
+              <h2 id="stageTitle">Archived conjunction replay</h2>
+            </div>
+            <div class="stage-legend" aria-label="Object legend">
+              <span><i class="legend-mark object-a"></i><b id="legendA">Object A</b></span>
+              <span><i class="legend-mark object-b"></i><b id="legendB">Object B</b></span>
+            </div>
+          </div>
+          <div class="canvas-wrap">
+            <canvas id="orbitCanvas" role="img" aria-label="Schematic orbit replay"></canvas>
+            <div class="canvas-corner top-left">
+              <span>Propagated frame</span><strong id="currentUtc">—</strong>
+            </div>
+            <div class="canvas-corner top-right" id="tcaCountdown">
+              <span>Time to TCA</span><strong>—</strong>
+            </div>
+            <div class="tca-toast" id="tcaToast" aria-hidden="true">TIME OF CLOSEST APPROACH</div>
+          </div>
+
+          <div class="playback-bar">
+            <button id="playButton" class="play-button" type="button" aria-pressed="false">
+              <svg class="play-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5l11 7-11 7z"/></svg>
+              <span>Play</span>
+            </button>
+            <button id="previousButton" class="transport-button" type="button" aria-label="Previous sample">−</button>
+            <label class="timeline-field" for="timeSlider">
+              <span class="sr-only">Replay time</span>
+              <input id="timeSlider" type="range" min="0" max="720" value="0" step="1">
+              <span class="tca-marker" id="tcaMarker" aria-hidden="true"></span>
+            </label>
+            <button id="nextButton" class="transport-button" type="button" aria-label="Next sample">+</button>
+            <output id="timeOutput" class="time-output">00:00 / 12:00</output>
+          </div>
+        </div>
+
+        <section class="chart-card" aria-labelledby="distanceChartTitle">
+          <div class="chart-heading">
+            <div>
+              <span class="stage-kicker">SAVED PROPAGATION SERIES</span>
+              <h3 id="distanceChartTitle">Separation through the 12-hour horizon</h3>
+            </div>
+            <div class="chart-readout"><span>Current separation</span><strong id="distanceReadout">—</strong></div>
+          </div>
+          <div class="distance-chart-wrap">
+            <canvas id="distanceChart" role="img" aria-label="Propagated pair separation over time"></canvas>
+            <div class="empty-chart" id="emptyChart" hidden>No saved time series for this row. TCA geometry remains available.</div>
+          </div>
+        </section>
+      </section>
+
+      <aside class="evidence-rail" aria-label="Evidence panels">
+        <div class="tab-list" role="tablist" aria-label="Evidence view">
+          <button type="button" role="tab" aria-selected="true" aria-controls="encounterPanel" id="encounterTab">Encounter</button>
+          <button type="button" role="tab" aria-selected="false" aria-controls="resultsPanel" id="resultsTab">Results</button>
+          <button type="button" role="tab" aria-selected="false" aria-controls="qualityPanel" id="qualityTab">Quality</button>
+        </div>
+
+        <section class="tab-panel active" role="tabpanel" id="encounterPanel" aria-labelledby="encounterTab">
+          <div class="pair-heading">
+            <div class="pair-orb object-a"></div>
+            <div><span id="pairAId">NORAD —</span><strong id="pairAName">Object A</strong></div>
+            <span class="pair-cross">×</span>
+            <div class="pair-orb object-b"></div>
+            <div><span id="pairBId">NORAD —</span><strong id="pairBName">Object B</strong></div>
+          </div>
+
+          <div class="metric-stack">
+            <article class="primary-metric">
+              <span>Minimum propagated separation</span>
+              <strong id="minDistance">—</strong>
+              <small>Refined TCA search</small>
+            </article>
+            <div class="metric-grid">
+              <article><span>Time to TCA</span><strong id="timeToTca">—</strong></article>
+              <article><span>Relative speed</span><strong id="relativeSpeed">—</strong></article>
+              <article><span>Altitude Δ</span><strong id="altitudeDifference">—</strong></article>
+              <article><span>Approach angle</span><strong id="approachAngle">—</strong></article>
+            </div>
+          </div>
+
+          <div class="classification-row">
+            <div><span>Fixed 25 km alarm</span><strong id="fixedAlarm">—</strong></div>
+            <div><span>Deterministic proxy</span><strong id="proxyLabel">—</strong></div>
+          </div>
+
+          <div class="science-note">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3L2 21h20L12 3zm0 6v5m0 3v1"/></svg>
+            <p><strong>Not collision probability.</strong> Public TLEs do not provide covariance or hard-body radius.</p>
+          </div>
+        </section>
+
+        <section class="tab-panel" role="tabpanel" id="resultsPanel" aria-labelledby="resultsTab" hidden>
+          <div class="panel-title-row">
+            <div><span class="stage-kicker">PAPER AGGREGATE</span><h3>Held-out model comparison</h3></div>
+            <span class="evidence-tag">Exploratory</span>
+          </div>
+          <div class="metric-switch" role="group" aria-label="Model comparison metric">
+            <button type="button" class="active" data-metric="pr_auc">PR-AUC</button>
+            <button type="button" data-metric="f1">F1</button>
+            <button type="button" data-metric="recall">Recall</button>
+          </div>
+          <div class="model-bars" id="modelBars"></div>
+          <p class="results-note" id="resultsNote">Distance uses continuous −minimum-distance ranking for PR-AUC.</p>
+          <div class="finding-card">
+            <span>Finding</span>
+            <strong>Initial hypothesis not supported</strong>
+            <p>The learned models did not surpass the target-aligned distance comparator overall under this dataset and protocol.</p>
+          </div>
+        </section>
+
+        <section class="tab-panel" role="tabpanel" id="qualityPanel" aria-labelledby="qualityTab" hidden>
+          <div class="panel-title-row">
+            <div><span class="stage-kicker">ACQUISITION GATES</span><h3>Evidence quality</h3></div>
+            <span class="evidence-tag failed">Not enough data</span>
+          </div>
+          <div class="gate-list" id="qualityGates"></div>
+          <div class="quality-summary">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3L2 21h20L12 3zm0 6v5m0 3v1"/></svg>
+            <div><strong>Confirmatory publication gate closed</strong><p>Model metrics remain pilot evidence and do not reopen the failed acquisition gate.</p></div>
+          </div>
+          <div class="archive-summary" id="archiveCounts"></div>
+        </section>
+      </aside>
+    </main>
+
+    <section class="method-ribbon" aria-label="Research workflow">
+      <div class="method-node complete"><span>01</span><strong>TLE archive</strong><small>immutable bundles</small></div>
+      <i aria-hidden="true"></i>
+      <div class="method-node complete"><span>02</span><strong>SGP4</strong><small>12 h propagation</small></div>
+      <i aria-hidden="true"></i>
+      <div class="method-node complete"><span>03</span><strong>Screen + TCA</strong><small>coarse then refined</small></div>
+      <i aria-hidden="true"></i>
+      <div class="method-node complete"><span>04</span><strong>Pair/time split</strong><small>leakage-resistant</small></div>
+      <i aria-hidden="true"></i>
+      <div class="method-node active"><span>05</span><strong>Models vs distance</strong><small>held-out comparison</small></div>
+    </section>
+
+    <footer class="app-footer">
+      <span id="sourceFooter">Source: local frozen artifacts</span>
+      <span>Public TLE/SGP4 geometry · no covariance or hard-body radius · not Probability of Collision (Pc)</span>
+    </footer>
+
+    <div class="loading-screen" id="loadingScreen" role="status">
+      <div class="loading-orbit"><span></span></div>
+      <strong>Loading frozen evidence</strong>
+      <small>Local files only</small>
+    </div>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
