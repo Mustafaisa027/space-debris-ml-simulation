@@ -1,0 +1,22 @@
+# Gelidonya İDA — boot'ta otonomi yığınını başlatan systemd servisi.
+# Kurulum: deploy/README.md
+[Unit]
+Description=Gelidonya IDA mission autostart (ROS2)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=gelidonya_2
+# ZED USB ve uçuş kontrolcü portu hazır olsun diye kısa bekleme
+ExecStartPre=/bin/sleep 12
+ExecStart=/home/gelidonya_2/obstacle_map_ws/start_mission.sh
+Restart=on-failure
+RestartSec=5
+Environment=HOME=/home/gelidonya_2
+# Çıktıyı journald'a yaz (journalctl ile izlenir)
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

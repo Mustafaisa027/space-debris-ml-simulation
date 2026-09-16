@@ -1,0 +1,49 @@
+{
+  "success": true,
+  "actor_counts": [
+    64,
+    64,
+    64,
+    64,
+    64,
+    64
+  ],
+  "geometry": [
+    {
+      "event": "E01",
+      "raw_km": 14.600437886499712
+    },
+    {
+      "event": "E04",
+      "raw_km": 20.80716881802357
+    },
+    {
+      "event": "E06",
+      "raw_km": 37.65563902420283
+    },
+    {
+      "event": "E08",
+      "raw_km": 13.069048619977506
+    },
+    {
+      "event": "E01",
+      "raw_km": 14.600437886499712
+    }
+  ],
+  "renderer": {
+    "success": true,
+    "status": "success",
+    "diagnostics": {
+      "python": "3.12.13",
+      "platform": "Windows-11-10.0.26200-SP0",
+      "pyside6": "6.11.2",
+      "pyvista": "0.48.4",
+      "vtk": "9.6.2",
+      "gpu_vendor": "ATI Technologies Inc.",
+      "renderer": "AMD Radeon(TM) Graphics",
+      "opengl_version": "4.6.0 Compatibility Profile Context 24.10.38.240812"
+    },
+    "error": "",
+    "safe_mode": false
+  }
+}

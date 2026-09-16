@@ -1,0 +1,17 @@
+BACKGROUND = "#05070D"
+PANEL = "#0E1420"
+PANEL_ALT = "#111B2A"
+RAIL = "#080C14"
+CYAN = "#37E6E0"
+AMBER = "#F5A623"
+RED = "#FF4D4F"
+TEXT = "#C9D6E3"
+BRIGHT = "#F4FBFF"
+MUTED = "#6B7A8F"
+GRID = "#243247"
+BORDER = "#2D405B"
+GREEN = "#38D97A"
+PRIMARY_BUTTON = "#15343A"
+CHECKED_BUTTON = "#18313B"
+MONO_FONT = '"JetBrains Mono", "Space Mono", "Cascadia Mono", Consolas'
+SANS_FONT = 'Inter, "Segoe UI", Arial'

@@ -1,6 +1,6 @@
-"""Export a small, self-contained payload for the offline simulation GUI.
+﻿"""Export a small, self-contained payload for the offline simulation GUI.
 
-The encounter replay is sourced from a local validation artifact.  The paper
+The encounter replay is sourced from local validation artifacts. The paper
 aggregate is intentionally embedded separately so a single replay row is never
 mistaken for the manuscript's held-out evaluation.
 """
@@ -8,6 +8,7 @@ mistaken for the manuscript's held-out evaluation.
 from __future__ import annotations
 
 import argparse
+import copy
 import csv
 import json
 from datetime import datetime, timedelta, timezone
@@ -21,7 +22,7 @@ PAPER_AGGREGATE: dict[str, Any] = {
         "Machine Learning-Based Simulation Approach for Assessing Space Debris "
         "Collision Risk in Low Earth Orbit"
     ),
-    "author": "Mustafa İsa Oruçtutan",
+    "author": "Mustafa \u0130sa Oru\u00e7tutan",
     "evidence_status": "exploratory",
     "counts": {
         "verified_snapshots": 97,
@@ -69,6 +70,24 @@ PAPER_AGGREGATE: dict[str, Any] = {
     ],
 }
 
+DEFAULT_SUPPLEMENTAL_MODEL_REPORTS = (
+    {
+        "key": "catalog_75_validation_random_split",
+        "label": "75-object validation random split",
+        "path": Path("outputs/catalog_75_validation_pipeline/model_comparison.csv"),
+    },
+    {
+        "key": "history_pair_grouped_time_split",
+        "label": "History pair-grouped time split",
+        "path": Path("outputs/history/model_comparison_pair_grouped_time_split.csv"),
+    },
+)
+
+LOCAL_RERUN_SOURCE_NOTE = (
+    "Local validation/development reruns. This block is not an official "
+    "manuscript result and must not be merged with the fixed paper aggregate."
+)
+
 
 def _read_commented_csv(path: Path) -> tuple[dict[str, str], list[dict[str, str]]]:
     metadata: dict[str, str] = {}
@@ -94,6 +113,26 @@ def _number(row: dict[str, str], key: str, default: float = 0.0) -> float:
         return default
 
 
+def _optional_number(row: dict[str, str], key: str) -> float | None:
+    value = row.get(key, "")
+    if value in ("", None):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_int(row: dict[str, str], key: str) -> int | None:
+    value = row.get(key, "")
+    if value in ("", None):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _scenario(row: dict[str, str], index: int) -> dict[str, Any]:
     object_1 = row.get("object_1", "Object A")
     object_2 = row.get("object_2", "Object B")
@@ -101,7 +140,7 @@ def _scenario(row: dict[str, str], index: int) -> dict[str, Any]:
     return {
         "id": f"encounter-{index + 1}",
         "label": (
-            f"{object_1} ({row.get('object_1_catalog_id', '')}) × "
+            f"{object_1} ({row.get('object_1_catalog_id', '')}) \u00d7 "
             f"{object_2} ({row.get('object_2_catalog_id', '')})"
         ),
         "object_1": object_1,
@@ -128,6 +167,64 @@ def _scenario(row: dict[str, str], index: int) -> dict[str, Any]:
         "replay_label": "Synthetic demonstration" if synthetic else "Validation snapshot replay",
         "distance_series": [],
     }
+
+
+def _load_model_report(report_key: str, label: str, path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+
+    metadata, rows = _read_commented_csv(path)
+    normalized_rows = []
+    for row in rows:
+        model_name = row.get("model", "")
+        normalized_rows.append(
+            {
+                "model": model_name,
+                "status": "not_enough_data" if model_name == "not_enough_data" else "ok",
+                "pr_auc": _optional_number(row, "pr_auc"),
+                "roc_auc": _optional_number(row, "roc_auc"),
+                "precision": _optional_number(row, "precision"),
+                "recall": _optional_number(row, "recall"),
+                "f1": _optional_number(row, "f1"),
+                "accuracy": _optional_number(row, "accuracy"),
+                "false_alarm_rate": _optional_number(row, "false_alarm_rate"),
+                "false_positive": _optional_int(row, "false_positive"),
+                "false_negative": _optional_int(row, "false_negative"),
+                "true_positive": _optional_int(row, "true_positive"),
+                "true_negative": _optional_int(row, "true_negative"),
+                "train_rows": _optional_int(row, "train_rows"),
+                "test_rows": _optional_int(row, "test_rows"),
+                "train_pairs": _optional_int(row, "train_pairs"),
+                "test_pairs": _optional_int(row, "test_pairs"),
+                "train_positive_rows": _optional_int(row, "train_positive_rows"),
+                "test_positive_rows": _optional_int(row, "test_positive_rows"),
+                "train_positive_pairs": _optional_int(row, "train_positive_pairs"),
+                "test_positive_pairs": _optional_int(row, "test_positive_pairs"),
+                "train_positive_snapshots": _optional_int(row, "train_positive_snapshots"),
+                "test_positive_snapshots": _optional_int(row, "test_positive_snapshots"),
+                "excluded_rows": _optional_int(row, "excluded_rows"),
+                "cutoff_utc": row.get("cutoff_utc") or None,
+                "split": row.get("split") or None,
+                "note": row.get("note") or None,
+            }
+        )
+
+    return {
+        "key": report_key,
+        "label": label,
+        "source": str(path.as_posix()),
+        "source_metadata": metadata,
+        "rows": normalized_rows,
+    }
+
+
+def _load_supplemental_model_reports() -> list[dict[str, Any]]:
+    reports: list[dict[str, Any]] = []
+    for spec in DEFAULT_SUPPLEMENTAL_MODEL_REPORTS:
+        report = _load_model_report(spec["key"], spec["label"], spec["path"])
+        if report is not None:
+            reports.append(report)
+    return reports
 
 
 def _parse_utc(value: str) -> datetime:
@@ -176,6 +273,51 @@ def _tle_distance_series(
     return series
 
 
+def _load_archived_distance_series(
+    distance_series_path: Path,
+) -> tuple[dict[str, str], list[dict[str, Any]]]:
+    series_metadata, series_rows = _read_commented_csv(distance_series_path)
+    return (
+        series_metadata,
+        [
+            {
+                "minute": _number(row, "minute"),
+                "utc_iso": row.get("utc_iso", ""),
+                "distance_km": _number(row, "distance_km"),
+            }
+            for row in series_rows
+        ],
+    )
+
+
+def _annotate_series_with_tca(
+    series: list[dict[str, Any]], scenario: dict[str, Any]
+) -> list[dict[str, Any]]:
+    annotated = list(series)
+    refined_tca = float(scenario["time_to_tca_min"])
+    if not any(abs(point["minute"] - refined_tca) < 1e-6 for point in annotated):
+        annotated.append(
+            {
+                "minute": refined_tca,
+                "utc_iso": scenario["tca_utc"],
+                "distance_km": float(scenario["min_distance_km"]),
+            }
+        )
+    annotated.sort(key=lambda point: point["minute"])
+    return annotated
+
+
+def _distance_series_matches_scenario(
+    series: list[dict[str, Any]], scenario: dict[str, Any]
+) -> bool:
+    if not series:
+        return False
+    first_point = series[0]
+    return abs(first_point["minute"]) < 1e-9 and abs(
+        first_point["distance_km"] - float(scenario["current_distance_km"])
+    ) < 1e-3
+
+
 def export_gui_data(
     conjunctions_path: Path,
     distance_series_path: Path | None,
@@ -190,48 +332,50 @@ def export_gui_data(
     scenarios = [_scenario(row, index) for index, row in enumerate(rows[:limit])]
 
     series_metadata: dict[str, str] = {}
+    archived_series: list[dict[str, Any]] = []
+    archived_matches_first_scenario: bool | None = None
+    distance_series_source: str | None = None
     if distance_series_path and distance_series_path.exists():
-        series_metadata, series_rows = _read_commented_csv(distance_series_path)
-        scenarios[0]["distance_series"] = [
-            {
-                "minute": _number(row, "minute"),
-                "utc_iso": row.get("utc_iso", ""),
-                "distance_km": _number(row, "distance_km"),
-            }
-            for row in series_rows
-        ]
-        # The archived curve is sampled every five minutes, whereas TCA is
-        # refined between samples. Preserve both facts by inserting the
-        # independently calculated event point into the visual series.
-        refined_tca = float(scenarios[0]["time_to_tca_min"])
-        if not any(
-            abs(point["minute"] - refined_tca) < 1e-6
-            for point in scenarios[0]["distance_series"]
-        ):
-            scenarios[0]["distance_series"].append(
-                {
-                    "minute": refined_tca,
-                    "utc_iso": scenarios[0]["tca_utc"],
-                    "distance_km": float(scenarios[0]["min_distance_km"]),
-                }
+        series_metadata, archived_series = _load_archived_distance_series(distance_series_path)
+
+    if tle_path and tle_path.exists():
+        for scenario in scenarios:
+            scenario["distance_series"] = _tle_distance_series(tle_path, scenario)
+        series_metadata["generation_mode"] = "tle_all_scenarios"
+        distance_series_source = "generated_from_tle"
+        if archived_series:
+            archived_matches_first_scenario = _distance_series_matches_scenario(
+                archived_series, scenarios[0]
             )
-            scenarios[0]["distance_series"].sort(key=lambda point: point["minute"])
-    elif tle_path and tle_path.exists():
-        scenarios[0]["distance_series"] = _tle_distance_series(
-            tle_path, scenarios[0]
+    elif archived_series:
+        archived_matches_first_scenario = _distance_series_matches_scenario(
+            archived_series, scenarios[0]
         )
+        if archived_matches_first_scenario:
+            scenarios[0]["distance_series"] = _annotate_series_with_tca(
+                archived_series, scenarios[0]
+            )
+            series_metadata["generation_mode"] = "archived_first_scenario_only"
+            distance_series_source = str(distance_series_path.as_posix())
+        else:
+            series_metadata["generation_mode"] = "archived_series_mismatch_skipped"
+
+    if archived_matches_first_scenario is not None:
+        series_metadata["archived_matches_first_scenario"] = (
+            "true" if archived_matches_first_scenario else "false"
+        )
+
+    local_rerun_reports = _load_supplemental_model_reports()
 
     payload = {
         "schema_version": 1,
-        "paper": PAPER_AGGREGATE,
+        "paper": copy.deepcopy(PAPER_AGGREGATE),
         "replay": {
             "label": "Local validation artifact",
             "not_to_scale": True,
             "source": str(conjunctions_path.as_posix()),
             "source_metadata": metadata,
-            "distance_series_source": (
-                str(distance_series_path.as_posix()) if distance_series_path else None
-            ),
+            "distance_series_source": distance_series_source,
             "distance_series_metadata": series_metadata,
             "tle_source": str(tle_path.as_posix()) if tle_path else None,
             "scenarios": scenarios,
@@ -241,6 +385,11 @@ def export_gui_data(
             "The proxy label and risk score are not probability of collision (Pc)."
         ),
     }
+    if local_rerun_reports:
+        payload["local_reruns"] = {
+            "source_note": LOCAL_RERUN_SOURCE_NOTE,
+            "supplemental_model_reports": local_rerun_reports,
+        }
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -255,11 +404,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path("outputs/catalog_75_validation_pipeline/identified_conjunctions.csv"),
     )
-    parser.add_argument(
-        "--distance-series",
-        type=Path,
-        default=None,
-    )
+    parser.add_argument("--distance-series", type=Path, default=None)
     parser.add_argument("--tle", type=Path, default=None)
     parser.add_argument(
         "--output", type=Path, default=Path("gui/data/simulation.json")

@@ -75,6 +75,7 @@ def test_operator_documentation_matches_active_v2_contract():
 
     for required_text in (
         "minutes `17` and `47` of every UTC hour",
+        "requires two elapsed hours since the latest archived fetch",
         "manifest schema 3",
         "config/experiment_10_days_v2.json",
         "2026-07-24T00:17:00Z",

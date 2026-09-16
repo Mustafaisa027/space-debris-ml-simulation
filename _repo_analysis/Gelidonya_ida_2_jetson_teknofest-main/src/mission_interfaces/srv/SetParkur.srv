@@ -1,0 +1,7 @@
+# SADECE test/simulasyon icin parkur durumunu elle zorlamak amaciyla.
+# Gercek yarismada parkur gecisleri otomatiktir; bu servis debug icindir.
+uint8 parkur       # 1=PARKUR1, 2=PARKUR2, 3=PARKUR3
+---
+bool success
+string message
+uint8 current_parkur

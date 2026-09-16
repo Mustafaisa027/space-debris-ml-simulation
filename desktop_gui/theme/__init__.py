@@ -1,0 +1,2 @@
+"""Mission Control visual theme."""
+

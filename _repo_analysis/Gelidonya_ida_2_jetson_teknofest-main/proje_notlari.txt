@@ -1,0 +1,38 @@
+cd ~/obstacle_map_ws
+nano proje_notlari.txt
+Gelidonya İDA Jetson Kod Altyapısı
+
+Bu depoda Jetson üzerinde çalışan ROS2 tabanlı algılama ve engelden kaçınma kodları tutulmaktadır.
+
+1. obstacle_map_ws/src/zed_obstacle_map
+- pointcloud_filter_node.py:
+  ZED2i kamerasından gelen PointCloud2 verisini filtreler.
+  Su yüzeyi, gürültü ve gereksiz uzak noktaları temizler.
+
+- obstacle_map_node.py:
+  Filtrelenen engel verilerinden temel engel haritası üretir.
+
+- sector_avoidance_node.py:
+  Engel verisini sektörlere ayırarak güvenli yön analizine destek olur.
+
+2. yolo_jetson
+- zed_yolo_node.py:
+  ZED2i RGB görüntüsü üzerinde YOLO modelini çalıştırır.
+
+- best2.pt:
+  Eğitilmiş YOLO model dosyasıdır.
+
+GitHub’a gönderilen dosyalar:
+- src/
+- yolo_jetson/
+- .gitignore
+- proje_notlari.txt
+
+GitHub’a gönderilmeyen dosyalar:
+- build/
+- install/
+- log/
+- __pycache__/
+- .venv/
+- runs/
+- video ve rosbag kayıtları

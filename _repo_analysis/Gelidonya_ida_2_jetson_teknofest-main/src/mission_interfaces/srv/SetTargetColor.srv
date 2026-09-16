@@ -1,0 +1,6 @@
+# Gorev baslamadan once (STATE_READY) kamikaze hedef rengini elle atamak icin.
+# Yarisma kablosuz ise YKI/RC yerine bu servis operator tarafindan cagrilabilir.
+uint8 color        # TargetColor sabitleri: 1=RED, 2=GREEN, 3=BLACK
+---
+bool success
+string message

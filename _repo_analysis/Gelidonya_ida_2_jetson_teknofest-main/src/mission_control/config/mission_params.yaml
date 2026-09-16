@@ -1,0 +1,156 @@
+# Gelidonya IDA gorev parametreleri.
+# Waypoint indeksleri 0-tabanlidir (MAVROS wp_seq).
+#   item 0 = HOME (ArduPilot), WP1..WP4 -> seq 1..4  (Parkur-1)
+#   WP5      -> seq 5       (Parkur-2 son nokta, Parkur-3 baslangici)
+
+mission_manager_node:
+  ros__parameters:
+    parkur1_last_wp: 4          # WP4'e ulasinca Parkur-2'ye gec
+    parkur2_last_wp: 5          # WP5'e ulasinca Parkur-3'e gec
+    # Renk SADECE Parkur-3 icin gerekli. true olursa renk gelmeden gorev hic
+    # baslamaz (BOOT'ta kalir) ve Parkur-1+2'nin 155 puani bastan kaybedilir.
+    # false: gorev renksiz de baslar; renk yoksa sadece P3 angajmani yapilmaz.
+    require_target_color: false
+    control_rate_hz: 5.0
+    auto_start_on_auto_mode: true   # AUTO + ARM = gorev basla
+    kamikaze_timeout_s: 90.0
+    # Ucus modu yonetimi (manager her parkurda modu ayarlar):
+    manage_flight_mode: true
+    parkur1_mode: "AUTO"        # yuklu waypoint gorevi (WP1..WP4)
+    parkur2_mode: "GUIDED"      # Jetson WP5'i hedef verir, BendyRuler kacar
+    parkur3_mode: "GUIDED"      # kamikaze setpoint gonderir
+    emergency_mode: "HOLD"
+    mode_retry_period_s: 1.0    # mod dogrulanmazsa set_mode'u tekrar dene
+    # Parkur-2 GUIDED navigasyonu:
+    p2_send_guided_target: true # WP5'i hedef olarak yayinla
+    p2_arrival_radius_m: 2.5    # WP5'e bu mesafede varilmis sayilir -> P3
+    p2_target_alt: 0.0          # deniz araci
+
+iha_color_receiver_node:
+  ros__parameters:
+    source_mode: "mavlink"      # mavlink | udp | both  (IHA renk MAVLink STATUSTEXT ile)
+    statustext_topic: "/mavros/statustext/recv"
+    udp_ip: "0.0.0.0"
+    udp_port: 5010
+    default_color: ""           # IHA'siz test icin "red"/"green"/"black"
+    republish_period_s: 1.0
+
+# Hedefleme mantigi: kamikaze_color_controller.py (ROS'tan bagimsiz cekirdek).
+# Bu dugum onun ROS sarmalayicisidir.
+kamikaze_node:
+  ros__parameters:
+    # ZED2i HD720: 1280x720. Baska cozunurluk kullanirsan guncelle.
+    image_width: 1280
+    image_height: 720
+
+    # --- Kontrolcu ayarlari ---
+    min_conf: 0.55              # bunun altindaki tespitler yok sayilir
+    center_tolerance_frac: 0.06 # goruntu genisliginin %6'si merkez sayilir
+    turn_gain: 1.30
+    max_turn: 0.75
+
+    # --- Soyut komut -> gercek hiz olcekleme ---
+    max_speed_mps: 2.0          # forward_command=1.0 karsiligi
+    max_yaw_rate_radps: 1.0     # turn_command=1.0 karsiligi
+    setpoint_rate_hz: 10.0      # GUIDED surekli komut ister
+
+    # --- Temas / faz esikleri ---
+    terminal_area_frac: 0.25    # kutu bu orani gecince TERMINAL faz
+    impact_area_frac: 0.45      # bu orani gecince temas sayilir
+    impact_frames: 3            # ust uste kac kare
+    lost_target_timeout_s: 2.0
+
+    # YOLO modelinin sinif adlari kontrolcunun bekledigi red/green/black ile
+    # ESLESMIYOR. Model (best2.pt) su siniflari uretiyor:
+    #   0:'black buoy' 1:'green buoy' 2:'orange buoy' 3:'red buoy' 4:'yellow buoy'
+    # Esleme olmadan kamikaze hicbir hedefi secemez (Parkur-3 calismaz).
+    # NOT: 'orange buoy' = parkur kenar dubasi (RAL 2003),
+    #      'yellow buoy' = engel dubasi (RAL 1026). Hedef degiller, eslenmiyor.
+    class_aliases: ["black buoy:black", "green buoy:green", "red buoy:red"]
+
+    # ONEMLI: parkur3_mode=GUIDED ise, aracin hedefe surmesi icin bu true olmali.
+    # Kuru testte false birak, suda GUIDED denemesinde bilincli true yap.
+    send_velocity: false
+    require_parkur3: true
+
+mission_logger_node:
+  ros__parameters:
+    out_dir: "~/gelidonya_logs"     # dahili JSONL/analiz kaydi (teslim degil)
+    flush_period_s: 2.0
+    sectors_log_every: 10
+
+# --- SARTNAME VERI TESLIMI (3 dosya) ---
+# Dosya 2: arac telemetri CSV (min 1 Hz, header'li)
+telemetry_logger_node:
+  ros__parameters:
+    out_dir: "~/gelidonya_logs"
+    rate_hz: 5.0                    # sartname min 1 Hz
+    fsync_every: 25
+
+# Dosya 1: islenmis kamera mp4 (bbox + sinif + zaman etiketi)
+# Dosya 3: engel haritasi mp4 (zaman etiketli)
+video_recorder_node:
+  ros__parameters:
+    out_dir: "~/gelidonya_logs"
+    fps: 10.0                       # sartname min 1 Hz
+    record_camera: true
+    record_map: true
+    map_pixels: 480
+    queue_size: 30
+
+# Dosya 3'un kaynagi: OccupancyGrid uretir
+obstacle_map_node:
+  ros__parameters:
+    cloud_topic: "/zed/zed_node/point_cloud/cloud_registered"
+    map_frame: "zed_left_camera_frame"
+    map_width_m: 8.0
+    map_height_m: 8.0
+    resolution: 0.10
+    min_range: 0.30                 # obstacle_bridge ile ayni algilama araligi
+    max_range: 3.00
+
+# Mevcut algilama dugumu (Parkur-2 BendyRuler beslemesi)
+# NOT: ZED2i ros2 wrapper topic on-eki launch'a gore /zed/zed_node ya da
+# /zed2i/zed_node olabilir. 'ros2 topic list' ile dogrulayip gerekiyorsa
+# cloud_topic/image_topic degerlerini guncelle.
+obstacle_bridge_node:
+  ros__parameters:
+    cloud_topic: "/zed/zed_node/point_cloud/cloud_registered"
+    scan_topic: "/mavros/obstacle/send"
+    coordinate_mode: "ros"
+    start_enabled: false        # mission_manager Parkur-2'de acar
+    # Algilama araligi 0.30 - 3.00 m (Parkur-2 manevra mesafesi).
+    # Sektorlere bolunmus mesafeler OBSTACLE_DISTANCE olarak CUAV X7+'a gider;
+    # bos sektorler BendyRuler icin "guvenli yon" anlamina gelir.
+    min_forward: 0.30
+    max_range: 3.0
+    min_height: -0.20           # su yuzeyi/dalga yansimasi altta kalir
+    max_height: 2.00
+    fov_deg: 100.0
+    sector_count: 40            # ~2.5 derece cozunurluk
+    percentile_ratio: 0.10      # tek gurultu noktasi sektoru bozmasin
+    # Orin Nano'da ZED+YOLO+cloud ayni anda kosar; her N. noktayi isle (CPU dususu).
+    point_stride: 3
+
+# YOLO tespit dugumu (Parkur-3)
+# Orin Nano: en iyi performans icin modeli TensorRT'ye (.engine) export edip
+# yuklemek onerilir. imgsz'i 416/512'ye dusurmek FPS'i artirir.
+zed_yolo_node:
+  ros__parameters:
+    image_topic: "/zed/zed_node/rgb/color/rect/image"
+    model_path: "/home/gelidonya_2/obstacle_map_ws/yolo_jetson/best2.pt"
+    device: 0
+    conf: 0.35
+    imgsz: 416
+    process_every_n_frames: 2
+
+# KARA KUTU: gorev sirasinda ekrana bakamayacagimiz icin terminalde
+# gorecegimiz her seyi diske yazar (/rosout, FC mesajlari, dugum cokmeleri,
+# Jetson sicakligi) ve gorev sonunda ozet uretir.
+blackbox_node:
+  ros__parameters:
+    out_dir: "~/gelidonya_logs"
+    flush_period_s: 2.0
+    health_period_s: 5.0
+    node_check_period_s: 3.0
+    min_level: 20               # 20=INFO (her sey), 30=WARN (sadece uyari+hata)

@@ -24,7 +24,10 @@ as confirmatory evidence.
 - Cadence: GitHub delivery attempts at `:17` and `:47` every UTC hour, giving
   four opportunities inside each frozen two-hour scientific slot. A
   deterministic archive-backed slot guard makes every attempt after the first
-  successful poll in that slot a no-op. This operational redundancy was
+  successful poll in that slot a no-op and requires two elapsed hours from the
+  latest archived fetch before another provider request. This prevents adjacent
+  slot-boundary requests from violating CelesTrak's one-download-per-update
+  policy. This operational redundancy was
   frozen before collection after preflight runs showed GitHub cron delivery
   delays exceeding 60 minutes; it does not change slot assignment or sample
   weighting.
