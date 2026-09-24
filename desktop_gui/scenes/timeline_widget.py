@@ -140,10 +140,10 @@ class TimelineWidget(QWidget):
         painter.drawText(
             QRectF(rect.left(), rect.bottom() + 18, rect.width(), 14),
             (
-                f"T+{self._current_minute:.3f} dk  |  "
-                f"TCA {float(self._scenario.value('time_to_tca_min')):.3f} dk  |  "
-                f"KAPSAMA {self._coverage_percent:g}%"
+                f"T+{self._current_minute:.3f} min  |  "
+                f"TCA {float(self._scenario.value('time_to_tca_min')):.3f} min  |  "
+                f"COVERAGE {self._coverage_percent:g}%"
                 if self._scenario
-                else f"KAPSAMA {self._coverage_percent:g}%"
+                else f"COVERAGE {self._coverage_percent:g}%"
             ),
         )

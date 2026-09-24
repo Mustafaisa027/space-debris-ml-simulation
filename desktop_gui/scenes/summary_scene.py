@@ -30,7 +30,7 @@ class SummaryScene(QWidget):
         kicker = QLabel(data.paper["paper_code"])
         kicker.setProperty("accent", True)
         root.addWidget(kicker)
-        title = QLabel("Gorev Ozeti")
+        title = QLabel("Mission Summary")
         title.setObjectName("heroTitle")
         root.addWidget(title)
         paper_title = QLabel(data.paper["title"])
@@ -41,7 +41,7 @@ class SummaryScene(QWidget):
         frame = QFrame()
         frame.setProperty("panel", True)
         grid = QGridLayout(frame)
-        labels = ("DOGRULANMIS SNAPSHOT", "ADAY GOZLEM", "PROXY POZITIF", "HELD-OUT GOZLEM")
+        labels = ("VERIFIED SNAPSHOTS", "CANDIDATE OBSERVATIONS", "PROXY POSITIVE", "HELD-OUT OBSERVATIONS")
         for column, label in enumerate(labels):
             value = QLabel("0")
             value.setProperty("metric", True)
@@ -53,7 +53,7 @@ class SummaryScene(QWidget):
         root.addWidget(frame)
 
         gate_state = QLabel(
-            f"Kalite kapilari: {sum(gate['passed'] for gate in data.quality_gates)}/{len(data.quality_gates)} gecti"
+            f"Quality gates: {sum(gate['passed'] for gate in data.quality_gates)}/{len(data.quality_gates)} passed"
         )
         gate_state.setProperty("statusFail", True)
         root.addWidget(gate_state)

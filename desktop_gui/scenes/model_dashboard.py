@@ -24,9 +24,9 @@ METRICS = (
     ("PR-AUC", "pr_auc"),
     ("F1", "f1"),
     ("Recall", "recall"),
-    ("ROC-AUC (yerel)", "roc_auc"),
-    ("Precision (yerel)", "precision"),
-    ("False alarm rate (yerel)", "false_alarm_rate"),
+    ("ROC-AUC (local)", "roc_auc"),
+    ("Precision (local)", "precision"),
+    ("False alarm rate (local)", "false_alarm_rate"),
 )
 
 
@@ -41,10 +41,10 @@ class ModelDashboard(QWidget):
 
         header = QHBoxLayout()
         title_block = QVBoxLayout()
-        title = QLabel("Model Karsilastirma Panosu")
+        title = QLabel("Model Comparison Dashboard")
         title.setObjectName("sceneTitle")
         title_block.addWidget(title)
-        subtitle = QLabel("Sabit makale agregasi; 'yerel' metrikler ayri gelistirme raporundan gelir")
+        subtitle = QLabel("Fixed paper aggregation; local metrics come from a separate development report")
         subtitle.setProperty("muted", True)
         subtitle.setWordWrap(True)
         title_block.addWidget(subtitle)
@@ -60,7 +60,7 @@ class ModelDashboard(QWidget):
         chart_layout = QVBoxLayout(chart_frame)
         self.chart = pg.PlotWidget(background=PANEL)
         self.chart.setToolTip(
-            "Distance comparator: hedef-hizali kontrol, bagimsiz carpisma gercegi degil"
+            "Distance comparator: target-aligned control, not independent collision truth"
         )
         self.chart.setMinimumHeight(280)
         self.chart.showGrid(x=False, y=True, alpha=0.22)
@@ -83,8 +83,8 @@ class ModelDashboard(QWidget):
         root.addWidget(self.table)
 
         note = QLabel(
-            f"* Yerel 75-nesne random split raporu. Distance comparator: {DISTANCE_COMPARATOR_NOTE}. "
-            "Kaynaklar birlestirilmis tek bir performans iddiasi olarak yorumlanmamalidir."
+            f"* Local 75-object random split report. Distance comparator: {DISTANCE_COMPARATOR_NOTE}. "
+            "Sources must not be interpreted as one combined performance claim."
         )
         note.setProperty("warning", True)
         note.setWordWrap(True)

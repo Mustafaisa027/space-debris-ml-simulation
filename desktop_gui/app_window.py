@@ -111,7 +111,7 @@ class OrbitalSentinelWindow(QMainWindow):
             rail_layout.addWidget(button)
             self.nav_buttons.append(button)
         rail_layout.addStretch()
-        status = QLabel("KESIFSEL\nOPERASYONEL DEGIL")
+        status = QLabel("EXPLORATORY\nNON-OPERATIONAL")
         status.setProperty("warning", True)
         status.setWordWrap(True)
         rail_layout.addWidget(status)

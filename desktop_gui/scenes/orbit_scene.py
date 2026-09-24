@@ -318,7 +318,7 @@ class OrbitScene(QWidget):
         toolbar.setObjectName("orbitToolbar")
         toolbar_layout = QHBoxLayout(toolbar)
         toolbar_layout.setContentsMargins(14, 10, 14, 10)
-        title = QLabel("LEO DURUM GORUNUMU")
+        title = QLabel("LEO STATUS VIEW")
         title.setProperty("heading", True)
         toolbar_layout.addWidget(title)
         self.selector = QComboBox()
@@ -330,16 +330,16 @@ class OrbitScene(QWidget):
         self.mode_selector.setCurrentIndex(1)
         self.mode_selector.activated.connect(self._set_visualization_mode_by_index)
         toolbar_layout.addWidget(self.mode_selector)
-        fly = QPushButton("Cifte Odaklan")
+        fly = QPushButton("Focus on Pair")
         fly.clicked.connect(self.fly_to_encounter)
         toolbar_layout.addWidget(fly)
         self.camera_selector = QComboBox()
         self.camera_selector.addItems(
-            ("KAMERA: DUNYA", "KAMERA: PRIMARY", "KAMERA: SECONDARY", "KAMERA: CIFT", "KAMERA: TCA")
+            ("CAMERA: EARTH", "CAMERA: PRIMARY", "CAMERA: SECONDARY", "CAMERA: PAIR", "CAMERA: TCA")
         )
         self.camera_selector.activated.connect(self._apply_camera_mode)
         toolbar_layout.addWidget(self.camera_selector)
-        details = QPushButton("Konjonksiyon Detayi")
+        details = QPushButton("Conjunction Detail")
         details.clicked.connect(self.details_requested)
         toolbar_layout.addWidget(details)
         root.addWidget(toolbar)
@@ -370,20 +370,20 @@ class OrbitScene(QWidget):
         control_layout.setContentsMargins(14, 9, 14, 12)
         control_layout.setSpacing(7)
         row = QHBoxLayout()
-        self.play_button = QPushButton("Oynat")
+        self.play_button = QPushButton("Play")
         self.play_button.clicked.connect(self._toggle_playback)
         row.addWidget(self.play_button)
-        self.time_label = QLabel("T+0.000 dk")
+        self.time_label = QLabel("T+0.000 min")
         self.time_label.setProperty("mono", True)
         row.addWidget(self.time_label)
         self.tca_time_label = QLabel("TCA")
         self.tca_time_label.setProperty("accent", True)
         row.addWidget(self.tca_time_label)
-        go_tca = QPushButton("TCA'YA GIT")
+        go_tca = QPushButton("GO TO TCA")
         go_tca.clicked.connect(self.go_to_tca)
         row.addWidget(go_tca)
         row.addStretch()
-        speed_label = QLabel("HIZ")
+        speed_label = QLabel("SPEED")
         speed_label.setProperty("muted", True)
         row.addWidget(speed_label)
         self.speed = QComboBox()
@@ -406,12 +406,12 @@ class OrbitScene(QWidget):
         self.slider.setRange(0, 10000)
         self.slider.sliderMoved.connect(lambda value: self.controller.seek_fraction(value / 10000.0))
         control_layout.addWidget(self.slider)
-        note = QLabel("TLE/SGP4 replay - 3B gorunum ve nesne boyutlari olcege gore degildir")
+        note = QLabel("TLE/SGP4 replay - 3D view; object sizes are not to scale")
         note.setProperty("muted", True)
         control_layout.addWidget(note)
         legend = QLabel(
-            "PRIMARY: CYAN  |  SECONDARY: AMBER  |  TCA- YOL: GUCLU  |  "
-            "TCA+ YOL: SOLUK  |  TCA / MISS: KIRMIZI"
+            "PRIMARY: CYAN  |  SECONDARY: AMBER  |  TCA- PATH: STRONG  |  "
+            "TCA+ PATH: FADED  |  TCA / MISS: RED"
         )
         legend.setProperty("mono", True)
         legend.setProperty("muted", True)
@@ -950,7 +950,7 @@ class OrbitScene(QWidget):
         self.slider.setValue(round(fraction * self.slider.maximum()))
         self.slider.blockSignals(False)
         self.timeline.set_current_minute(minute)
-        self.time_label.setText(f"T+{minute:.3f} dk")
+        self.time_label.setText(f"T+{minute:.3f} min")
         scenario = self.data.scenarios[self.scenario_index]
         current_distance = scenario.distance_at(minute)
         self.distance_label.setText(f"CURRENT DISTANCE [SERIES] {current_distance:.3f} km")
@@ -1025,7 +1025,7 @@ class OrbitScene(QWidget):
             self.controller.toggle()
 
     def _on_play_state(self, playing: bool) -> None:
-        self.play_button.setText("Duraklat" if playing else "Oynat")
+        self.play_button.setText("Pause" if playing else "Play")
 
     def fly_to_encounter(self) -> None:
         if not self.has_3d_backend or self._plotter is None or self._encounter_points is None:

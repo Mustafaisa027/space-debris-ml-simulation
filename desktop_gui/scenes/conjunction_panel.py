@@ -39,7 +39,7 @@ class ConjunctionPanel(QWidget):
         root.setContentsMargins(22, 18, 22, 18)
         root.setSpacing(14)
 
-        header = QLabel("Konjonksiyon Detayi")
+        header = QLabel("Conjunction Detail")
         header.setObjectName("sceneTitle")
         root.addWidget(header)
         self.selector = QComboBox()
@@ -47,24 +47,24 @@ class ConjunctionPanel(QWidget):
         self.selector.currentIndexChanged.connect(self._select)
         root.addWidget(self.selector)
 
-        encounter, encounter_layout = panel("Yakin Yaklasim")
+        encounter, encounter_layout = panel("Closest Approach")
         self.encounter_grid = QGridLayout()
         self.encounter_grid.setHorizontalSpacing(28)
         self.encounter_grid.setVerticalSpacing(10)
         encounter_layout.addLayout(self.encounter_grid)
         root.addWidget(encounter)
 
-        live, live_layout = panel("Canli Playback", "Kanonik zaman cizelgesi ve secili cift")
+        live, live_layout = panel("Live Playback", "Canonical timeline and selected pair")
         self.live_grid = QGridLayout()
         self.live_grid.setHorizontalSpacing(28)
         self.live_labels: dict[str, QLabel] = {}
         for column, (key, label) in enumerate(
             (
-                ("simulation_time", "Simulasyon zamani"),
-                ("tca_offset", "TCA'ya gore"),
-                ("current_distance", "Guncel mesafe (screened seri)"),
-                ("primary_velocity", "Primary hiz"),
-                ("secondary_velocity", "Secondary hiz"),
+                ("simulation_time", "Simulation time"),
+                ("tca_offset", "Relative to TCA"),
+                ("current_distance", "Current distance (screened series)"),
+                ("primary_velocity", "Primary velocity"),
+                ("secondary_velocity", "Secondary velocity"),
             )
         ):
             name = QLabel(label.upper())
@@ -77,12 +77,12 @@ class ConjunctionPanel(QWidget):
         live_layout.addLayout(self.live_grid)
         root.addWidget(live)
 
-        ric, ric_layout = panel("RIC Ayrisimi", "Radial / in-track / cross-track bilesenleri")
+        ric, ric_layout = panel("RIC Separation", "Radial / in-track / cross-track components")
         self.ric_grid = QGridLayout()
         ric_layout.addLayout(self.ric_grid)
         root.addWidget(ric)
 
-        provenance, provenance_layout = panel("Replay Kaynagi")
+        provenance, provenance_layout = panel("Replay Source")
         source = QLabel(str(data.replay["source"]))
         source.setProperty("mono", True)
         source.setWordWrap(True)
@@ -122,7 +122,7 @@ class ConjunctionPanel(QWidget):
             return
         scenario = self.data.scenarios[self._scenario_index]
         self._current_minute = float(minute)
-        self.live_labels["simulation_time"].setText(engineering_value(minute, "dk"))
+        self.live_labels["simulation_time"].setText(engineering_value(minute, "min"))
         self.live_labels["tca_offset"].setText(format_tca_offset(minute - scenario.tca_minute))
         self.live_labels["current_distance"].setText(
             engineering_value(current_distance_km, "km")
@@ -141,10 +141,10 @@ class ConjunctionPanel(QWidget):
             ("Primary", f"{scenario.value('object_1')} ({scenario.value('catalog_id_1')})"),
             ("Secondary", f"{scenario.value('object_2')} ({scenario.value('catalog_id_2')})"),
             ("TCA (UTC)", scenario.value("tca_utc")),
-            ("Minimum mesafe", engineering_value(scenario.value("min_distance_km"), "km")),
-            ("Bagil hiz", engineering_value(scenario.value("relative_velocity_km_s"), "km/s")),
+            ("Minimum distance", engineering_value(scenario.value("min_distance_km"), "km")),
+            ("Relative velocity", engineering_value(scenario.value("relative_velocity_km_s"), "km/s")),
             ("Heuristic ranking score (NOT Pc)", metric_value(scenario.value("risk_score"), 6)),
-            ("Sabit esik alarmi", metric_value(scenario.value("fixed_threshold_alarm"))),
+            ("Fixed-threshold alarm", metric_value(scenario.value("fixed_threshold_alarm"))),
             ("Proxy positive (distance + velocity rule)", metric_value(scenario.value("proxy_positive"))),
         )
         self._add_fields(self.encounter_grid, fields, columns=3)
@@ -154,9 +154,9 @@ class ConjunctionPanel(QWidget):
             ("Radial", f"{metric_value(scenario.value('relative_radial_km'))} km"),
             ("In-track", f"{metric_value(scenario.value('relative_intrack_km'))} km"),
             ("Cross-track", f"{metric_value(scenario.value('relative_crosstrack_km'))} km"),
-            ("Yaklasma acisi", f"{metric_value(scenario.value('approach_angle_deg'))} deg"),
-            ("Primary irtifa", engineering_value(scenario.value("altitude_1_km"), "km")),
-            ("Secondary irtifa", engineering_value(scenario.value("altitude_2_km"), "km")),
+            ("Approach angle", f"{metric_value(scenario.value('approach_angle_deg'))} deg"),
+            ("Primary altitude", engineering_value(scenario.value("altitude_1_km"), "km")),
+            ("Secondary altitude", engineering_value(scenario.value("altitude_2_km"), "km")),
         )
         self._add_fields(self.ric_grid, ric_fields, columns=3)
 

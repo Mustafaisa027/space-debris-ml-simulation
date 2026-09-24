@@ -25,7 +25,7 @@ def metric_value(value: object, digits: int = 3) -> str:
     if value is None:
         return "N/A"
     if isinstance(value, bool):
-        return "EVET" if value else "HAYIR"
+        return "YES" if value else "NO"
     if isinstance(value, float):
         return f"{value:.{digits}f}"
     return str(value)
@@ -44,4 +44,3 @@ def centered_label(text: str) -> QLabel:
     label.setAlignment(Qt.AlignmentFlag.AlignCenter)
     label.setWordWrap(True)
     return label
-

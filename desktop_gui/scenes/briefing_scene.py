@@ -43,9 +43,9 @@ class BriefingScene(QWidget):
         mission_layout = QHBoxLayout(mission)
         mission_layout.setContentsMargins(22, 18, 22, 18)
         for label, value in (
-            ("DOGRULANMIS SNAPSHOT", data.counts["verified_snapshots"]),
-            ("ADAY GOZLEM", data.counts["candidate_observations"]),
-            ("REPLAY SENARYOSU", len(data.scenarios)),
+            ("VERIFIED SNAPSHOTS", data.counts["verified_snapshots"]),
+            ("CANDIDATE OBSERVATIONS", data.counts["candidate_observations"]),
+            ("REPLAY SCENARIOS", len(data.scenarios)),
             ("MODEL", len(data.models)),
         ):
             block = QVBoxLayout()
@@ -63,7 +63,7 @@ class BriefingScene(QWidget):
         warning.setWordWrap(True)
         root.addWidget(warning)
 
-        start = QPushButton("Gorevi Baslat")
+        start = QPushButton("Start Mission")
         start.setProperty("primary", True)
         start.setCursor(Qt.CursorShape.PointingHandCursor)
         start.clicked.connect(self.continue_requested)

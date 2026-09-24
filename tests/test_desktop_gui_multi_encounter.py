@@ -233,7 +233,7 @@ def test_go_to_tca_and_tca_mode_stay_exactly_synchronized(app: QApplication) -> 
     scene.controller.play()
     scene.set_visualization_mode("TCA")
     assert not scene.controller.is_playing
-    assert scene.camera_selector.currentText() == "KAMERA: TCA"
+    assert scene.camera_selector.currentText() == "CAMERA: TCA"
     assert scene.controller.current_minute == pytest.approx(data.scenarios[3].tca_minute)
     assert scene.timeline.current_fraction == pytest.approx(scene.timeline.tca_fraction)
     assert scene.tca_time_label.text() == "TCA"
@@ -279,7 +279,7 @@ def test_paused_scenario_switch_synchronizes_detail(app: QApplication) -> None:
         scene.set_scenario(index)
         scenario = scene.data.scenarios[index]
         assert detail.selector.currentIndex() == index
-        assert detail.live_labels["simulation_time"].text() == f"{scenario.tca_minute:.3f} dk"
+        assert detail.live_labels["simulation_time"].text() == f"{scenario.tca_minute:.3f} min"
         assert detail.live_labels["tca_offset"].text() == "TCA"
         assert detail.live_labels["current_distance"].text() == f"{scenario.distance_at(scenario.tca_minute):.3f} km"
     scene.set_visualization_mode("SELECTED")

@@ -1,17 +1,16 @@
 APP_TITLE = "Orbital Sentinel"
-APP_SUBTITLE = "LEO enkaz konjonksiyon analizi - kesifsel masaustu gorevi"
-SCENE_BRIEFING = "Acilis"
-SCENE_ORBIT = "3B Simulasyon"
-SCENE_CONJUNCTION = "Konjonksiyon"
-SCENE_MODELS = "Model Karsilastirma"
-SCENE_QUALITY = "Veri Kalitesi"
-SCENE_SUMMARY = "Ozet"
+APP_SUBTITLE = "LEO space-debris conjunction analysis - exploratory desktop mission"
+SCENE_BRIEFING = "Opening"
+SCENE_ORBIT = "3D Simulation"
+SCENE_CONJUNCTION = "Conjunction"
+SCENE_MODELS = "Model Comparison"
+SCENE_QUALITY = "Data Quality"
+SCENE_SUMMARY = "Summary"
 QUALITY_WARNING = (
-    "Sonuclar kesifseldir, operasyonel carpisma riski performansi olarak "
-    "yorumlanmamalidir."
+    "Results are exploratory and must not be interpreted as operational collision-risk performance."
 )
 DISTANCE_COMPARATOR_NOTE = (
-    "hedef-hizali kontrol, bagimsiz carpisma gercegi degil"
+    "target-aligned control, not independent collision truth"
 )
-DISCLAIMER_PREFIX = "Bilimsel sinir"
+DISCLAIMER_PREFIX = "Scientific limitation"
 REPOSITORY_URL = "https://github.com/Mustafaisa027/space-debris-ml-simulation"

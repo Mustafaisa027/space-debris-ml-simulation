@@ -12,7 +12,7 @@ class QualityGatesPanel(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(22, 18, 22, 18)
         root.setSpacing(14)
-        title = QLabel("Veri Kalitesi ve Seffaflik")
+        title = QLabel("Data Quality and Transparency")
         title.setObjectName("sceneTitle")
         root.addWidget(title)
 
@@ -27,14 +27,14 @@ class QualityGatesPanel(QWidget):
             card = QFrame()
             card.setProperty("gateFailed", not gate["passed"])
             card_layout = QVBoxLayout(card)
-            state = QLabel("GECTI" if gate["passed"] else "X BASARISIZ")
+            state = QLabel("PASSED" if gate["passed"] else "X FAILED")
             state.setProperty("statusPass" if gate["passed"] else "statusFail", True)
             label = QLabel(str(gate["label"]))
             label.setProperty("heading", True)
             label.setWordWrap(True)
             value = QLabel(f"{gate['value']} {gate['unit']}")
             value.setProperty("metric", True)
-            requirement = QLabel(f"Gereksinim: {gate['requirement']}")
+            requirement = QLabel(f"Requirement: {gate['requirement']}")
             requirement.setProperty("mono", True)
             card_layout.addWidget(state)
             card_layout.addWidget(label)
@@ -49,11 +49,11 @@ class QualityGatesPanel(QWidget):
         source_layout = QGridLayout(source)
         metadata = data.replay["source_metadata"]
         rows = (
-            ("Uretim zamani", metadata["generated_utc"]),
+            ("Generation time", metadata["generated_utc"]),
             ("Git commit", metadata["git_commit"]),
-            ("Konjonksiyon kaynagi", data.replay["source"]),
-            ("TLE kaynagi", data.replay["tle_source"]),
-            ("Seri uretimi", data.replay["distance_series_metadata"]["generation_mode"]),
+            ("Conjunction source", data.replay["source"]),
+            ("TLE source", data.replay["tle_source"]),
+            ("Series generation", data.replay["distance_series_metadata"]["generation_mode"]),
         )
         for row, (label, value) in enumerate(rows):
             name = QLabel(label.upper())
@@ -70,4 +70,3 @@ class QualityGatesPanel(QWidget):
         disclaimer.setProperty("muted", True)
         root.addWidget(disclaimer)
         root.addStretch()
-
