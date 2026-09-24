@@ -7,6 +7,7 @@ import pandas as pd
 import pytest
 
 from collection_cadence_health import (
+    cadence_report_passes,
     VerifiedObservation,
     cadence_health,
     scientific_collection_progress,
@@ -28,6 +29,34 @@ def test_cadence_health_fails_after_frozen_gap_without_bundle():
     assert report["status"] == "stale"
     assert report["healthy"] is False
     assert report["metric_role"] == "operational_liveness_only"
+
+
+def test_cadence_report_blocks_finalization_when_scientific_gate_fails():
+    active = {
+        "healthy": True,
+        "scientific_progress": {
+            "final_gate_evaluated": False,
+            "final_gate_pass": False,
+        },
+    }
+    failed_final = {
+        "healthy": True,
+        "scientific_progress": {
+            "final_gate_evaluated": True,
+            "final_gate_pass": False,
+        },
+    }
+    passed_final = {
+        "healthy": True,
+        "scientific_progress": {
+            "final_gate_evaluated": True,
+            "final_gate_pass": True,
+        },
+    }
+
+    assert cadence_report_passes(active) is True
+    assert cadence_report_passes(failed_final) is False
+    assert cadence_report_passes(passed_final) is True
 
 
 def test_cadence_health_uses_latest_schema_two_manifest(tmp_path):
@@ -142,6 +171,20 @@ def test_scientific_progress_detects_unreachable_final_coverage():
     assert report["final_gate_evaluated"] is True
     assert report["final_gate_pass"] is False
     assert report["maximum_reachable_snapshot_slots"] == 1
+
+
+def test_final_progress_enforces_frozen_tle_quality_gates():
+    config = load_experiment_config("config/experiment_10_days_v2.json")
+    end = datetime.fromisoformat(config.collection_end_utc.replace("Z", "+00:00"))
+    observations = [_observation(slot, "a" * 64) for slot in range(120)]
+
+    report = scientific_collection_progress(config, observations, end)
+
+    assert report["final_window_coverage_fraction"] == 1.0
+    assert report["observed_to_now_max_snapshot_gap_hours"] < 6.0
+    assert report["tle_hash_diversity_fraction"] == pytest.approx(1 / 120)
+    assert report["max_identical_tle_hash_run_bins"] == 120
+    assert report["final_gate_pass"] is False
 
 
 def test_final_progress_matches_publication_window_quality_metrics():

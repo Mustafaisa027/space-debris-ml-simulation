@@ -890,7 +890,10 @@ def test_frozen_evidence_rejects_low_tle_diversity_inside_test_partition(tmp_pat
     for record in records[-5:]:
         record["input_sha256"] = "a" * 64
 
-    with pytest.raises(EvidenceGenerationError, match="Partition TLE-update diversity"):
+    with pytest.raises(
+        EvidenceGenerationError,
+        match="Partition TLE-update diversity gate failed",
+    ):
         generate_evaluation_evidence(
             dataset_path,
             tmp_path / "out",

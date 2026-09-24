@@ -1102,6 +1102,12 @@ def compare_models(
     if min_snapshot_coverage_fraction is not None:
         coverage = float(window_quality["snapshot_coverage_fraction"])
         observed_gap = float(window_quality["max_snapshot_gap_hours"])
+        observed_diversity = float(
+            window_quality["tle_input_hash_diversity_fraction"]
+        )
+        observed_identical_run = int(
+            window_quality["max_identical_tle_hash_run_bins"]
+        )
         if coverage < min_snapshot_coverage_fraction:
             window_failures.append(
                 f"snapshot_coverage_fraction={coverage:.6f} < "
@@ -1112,8 +1118,6 @@ def compare_models(
                 f"max_snapshot_gap_hours={observed_gap:.6f} > "
                 f"allowed={max_snapshot_gap_hours:.6f}"
             )
-        observed_diversity = float(window_quality["tle_input_hash_diversity_fraction"])
-        observed_identical_run = int(window_quality["max_identical_tle_hash_run_bins"])
         if observed_diversity < min_tle_hash_diversity_fraction:
             window_failures.append(
                 f"tle_input_hash_diversity_fraction={observed_diversity:.6f} < "

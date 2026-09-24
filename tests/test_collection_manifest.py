@@ -105,7 +105,7 @@ def test_collection_workflow_creates_archive_parent_before_first_bundle():
     assert 'cron: "17 * * * *"' in workflow
     assert 'cron: "47 * * * *"' in workflow
     assert "src/collection_slot_guard.py archive-check" in workflow
-    assert "experiments/iac26-10d-v2/collections" in workflow
+    assert "experiments/iac26-15d-v5/collections" in workflow
     assert "'experiments/** -text'" in workflow
     assert (
         "github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'"
@@ -121,7 +121,7 @@ def test_cadence_workflow_checks_separate_data_archive():
     assert "ref: data-collection" in workflow
     assert "path: archive" in workflow
     assert "src/collection_cadence_health.py ../archive" in workflow
-    assert "config/experiment_10_days_v2.json" in workflow
+    assert "config/experiment_15_days_v5.json" in workflow
     assert 'cron: "07 * * * *"' in workflow
     assert "Verify recent schema-3 bundle" in workflow
 
@@ -146,7 +146,7 @@ def test_finalizer_is_window_locked_and_orders_the_evidence_chain():
     assert '$window.status -ne "window_complete"' in script
     assert "--workers `$Workers" not in script
     assert "--workers $Workers" in script
-    assert "config\\experiment_10_days_v2.json" in script
+    assert "config\\experiment_15_days_v5.json" in script
     assert "src\\finalization_checkpoint.py" in script
     assert "Test-CheckpointStage \"import\"" in script
     assert "Test-CheckpointStage \"resimulation\"" in script

@@ -2,9 +2,15 @@ name: Collect TLE observations
 
 on:
   schedule:
-    # Four attempts per two-hour scientific slot tolerate delayed GitHub cron
-    # delivery. The archive-backed slot guard permits at most one actual poll.
+    # Twelve attempts per three-hour scientific slot tolerate delayed/dropped
+    # GitHub cron delivery (best-effort scheduling can skip whole windows under
+    # load). The archive-backed slot guard still permits at most one actual
+    # poll per slot, so extra triggers are cheap no-ops and do not change slot
+    # assignment or sample weighting. Redundancy widened mid-collection on
+    # 2026-07-28 after GitHub dropped several scheduled windows.
+    - cron: "7 * * * *"
     - cron: "17 * * * *"
+    - cron: "37 * * * *"
     - cron: "47 * * * *"
   workflow_dispatch: {}
 
@@ -25,8 +31,8 @@ jobs:
     env:
       COLLECTION_ROOT: staging/collection
       DATA_BRANCH: data-collection
-      EXPERIMENT_CONFIG: config/experiment_10_days_v2.json
-      ARCHIVE_COLLECTIONS: experiments/iac26-10d-v2/collections
+      EXPERIMENT_CONFIG: config/experiment_15_days_v5.json
+      ARCHIVE_COLLECTIONS: experiments/iac26-15d-v5/collections
       SPACETRACK_IDENTITY: ${{ secrets.SPACETRACK_IDENTITY }}
       SPACETRACK_PASSWORD: ${{ secrets.SPACETRACK_PASSWORD }}
 
@@ -64,12 +70,12 @@ jobs:
             --provider auto \
             --snapshot-dir "$COLLECTION_ROOT/tle" \
             --run-root "$COLLECTION_ROOT/runs" \
-            --history "$COLLECTION_ROOT/history/conjunction_observations_iac26_75_v2.csv"
+            --history "$COLLECTION_ROOT/history/conjunction_observations_iac26_75_v5.csv"
 
       - name: Verify collection output
         if: steps.collection_slot.outputs.collect == 'true'
         run: |
-          test -s "$COLLECTION_ROOT/history/conjunction_observations_iac26_75_v2.csv"
+          test -s "$COLLECTION_ROOT/history/conjunction_observations_iac26_75_v5.csv"
           test "$(find "$COLLECTION_ROOT/tle" -type f -name '*.txt' | wc -l)" -ge 1
           test "$(find "$COLLECTION_ROOT/runs" -type f -name 'conjunction_dataset.csv' | wc -l)" -ge 1
 

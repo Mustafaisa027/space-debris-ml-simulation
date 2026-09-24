@@ -121,6 +121,7 @@ def test_load_experiment_config_exposes_authoritative_defaults(tmp_path):
     assert config.max_snapshot_gap_hours == 6
     assert config.min_tle_hash_diversity_fraction == 0.5
     assert config.max_identical_tle_hash_run_bins == 12
+    assert config.minimum_provider_poll_interval_hours == 2
     assert config.bootstrap_replicates == 2000
     assert config.bootstrap_seed == 114764
     assert config.recall_noninferiority_margin == 0.05
@@ -213,6 +214,16 @@ def test_experiment_config_rejects_window_duration_different_from_protocol(tmp_p
         load_experiment_config(path)
 
 
+def test_experiment_config_rejects_provider_floor_above_scientific_slot(tmp_path):
+    raw = _config()
+    raw["minimum_provider_poll_interval_hours"] = 3
+    path = tmp_path / "invalid-provider-floor.json"
+    path.write_text(json.dumps(raw), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="cannot exceed"):
+        load_experiment_config(path)
+
+
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     [
@@ -258,6 +269,64 @@ def test_repository_v2_config_is_pre_registered_and_isolated():
     assert config.adaptability_block_hours == 12
     assert config.adaptability_min_blocks == 10
     assert config.min_tle_hash_diversity_fraction == 0.30
+
+
+def test_repository_v5_config_is_active_and_frozen_protocol_consistent():
+    """v5 is independent while preserving the accepted scientific method."""
+    from space_debris.experiment import ACTIVE_EXPERIMENT_CONFIG
+    from space_debris.evidence import _validate_frozen_adaptability_protocol
+
+    assert ACTIVE_EXPERIMENT_CONFIG.name == "experiment_15_days_v5.json"
+
+    v5 = load_experiment_config("config/experiment_15_days_v5.json")
+    v3 = load_experiment_config("config/experiment_10_days_v3.json")
+
+    assert v5.experiment_id == "iac26-15d-v5"
+    assert v5.duration_days == 15
+    assert v5.poll_interval_hours == 3
+    assert v5.minimum_provider_poll_interval_hours == 2
+    assert v5.duration_days * 24 / v5.poll_interval_hours == 120
+    assert v5.collection_start_utc == "2026-08-16T00:17:00Z"
+    assert v5.collection_end_utc == "2026-08-31T00:17:00Z"
+    assert v5.archive_collections == "experiments/iac26-15d-v5/collections"
+    assert v5.snapshot_dir.endswith("tle_snapshots_iac26_75_v5")
+    assert v5.history.endswith("_iac26_75_v5.csv")
+
+    # Catalogue, method, gates and seeds are preserved; only prospective
+    # acquisition mechanics and isolated output paths change.
+    assert v5.catalog_version == v3.catalog_version
+    assert v5.catalog_sha256 == v3.catalog_sha256
+    frozen_fields = (
+        "candidate_threshold_km",
+        "fixed_threshold_km",
+        "label_threshold_km",
+        "label_relative_velocity_km_s",
+        "max_tle_age_hours",
+        "train_time_fraction",
+        "test_pair_fraction",
+        "pair_seed",
+        "primary_model",
+        "primary_feature_set",
+        "required_models",
+        "inner_pair_seed",
+        "bootstrap_replicates",
+        "bootstrap_seed",
+        "recall_noninferiority_margin",
+        "min_snapshot_coverage_fraction",
+        "max_snapshot_gap_hours",
+        "min_tle_hash_diversity_fraction",
+        "max_identical_tle_hash_run_bins",
+        "min_train_positive_rows",
+        "min_test_positive_rows",
+        "min_train_positive_pairs",
+        "min_test_positive_pairs",
+        "min_train_positive_snapshots",
+        "min_test_positive_snapshots",
+    )
+    for field in frozen_fields:
+        assert getattr(v5, field) == getattr(v3, field)
+
+    _validate_frozen_adaptability_protocol(v5)
 
 
 def test_experiment_config_rejects_unsafe_archive_collection_path(tmp_path):

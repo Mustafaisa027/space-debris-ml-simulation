@@ -54,6 +54,22 @@ class EvidenceGenerationError(RuntimeError):
     """Raised when a publication comparison cannot be generated safely."""
 
 
+def _index_by_unique_row_id(frame: pd.DataFrame) -> pd.DataFrame:
+    """Index paired predictions by ``source_row_id`` with a fail-closed check.
+
+    Replaces the ``verify_integrity=True`` keyword (deprecated in pandas 3 and
+    slated for removal) while preserving its contract: a duplicated row id means
+    the prediction rows are not uniquely paired, which must raise rather than
+    silently produce an ambiguous alignment.
+    """
+    indexed = frame.set_index("source_row_id")
+    if not indexed.index.is_unique:
+        raise EvidenceGenerationError(
+            "Prediction rows are not uniquely keyed by source_row_id"
+        )
+    return indexed
+
+
 CALIBRATED_DISTANCE_BASELINE = "inner_calibrated_distance_threshold"
 INELIGIBLE_SUPPORT_CONTROLS = frozenset(
     {
@@ -376,7 +392,7 @@ def paired_pair_cluster_bootstrap(
         raise EvidenceGenerationError("Exactly one fixed-threshold prediction per test row is required")
     if primary_model not in set(predictions["model"]):
         raise EvidenceGenerationError(f"Primary model is missing from predictions: {primary_model}")
-    baseline = baseline.set_index("source_row_id", verify_integrity=True)
+    baseline = _index_by_unique_row_id(baseline)
     y_baseline = baseline["y_true"].astype(int).to_numpy()
     baseline_pred_values = baseline["pred"].astype(int).to_numpy()
     baseline_score_values = baseline["score"].astype(float).to_numpy()
@@ -387,9 +403,9 @@ def paired_pair_cluster_bootstrap(
     )
     calibrated_reference: pd.DataFrame | None = None
     if CALIBRATED_DISTANCE_BASELINE in set(predictions["model"]):
-        calibrated_reference = predictions.loc[
-            predictions["model"].eq(CALIBRATED_DISTANCE_BASELINE)
-        ].set_index("source_row_id", verify_integrity=True)
+        calibrated_reference = _index_by_unique_row_id(
+            predictions.loc[predictions["model"].eq(CALIBRATED_DISTANCE_BASELINE)]
+        )
         if set(calibrated_reference.index) != set(baseline.index):
             raise EvidenceGenerationError(
                 "Calibrated distance prediction rows are not paired with the fixed baseline"
@@ -426,9 +442,9 @@ def paired_pair_cluster_bootstrap(
     )
     cpa_reference: pd.DataFrame | None = None
     if "constant_velocity_cpa" in set(predictions["model"]):
-        cpa_reference = predictions.loc[
-            predictions["model"].eq("constant_velocity_cpa")
-        ].set_index("source_row_id", verify_integrity=True)
+        cpa_reference = _index_by_unique_row_id(
+            predictions.loc[predictions["model"].eq("constant_velocity_cpa")]
+        )
         if set(cpa_reference.index) != set(baseline.index):
             raise EvidenceGenerationError(
                 "Constant-velocity CPA prediction rows are not paired with the fixed baseline"
@@ -502,8 +518,8 @@ def paired_pair_cluster_bootstrap(
         )
 
     for model_name in sorted(set(predictions["model"]) - {"fixed_threshold"}):
-        model = predictions.loc[predictions["model"].eq(model_name)].set_index(
-            "source_row_id", verify_integrity=True
+        model = _index_by_unique_row_id(
+            predictions.loc[predictions["model"].eq(model_name)]
         )
         if set(model.index) != set(baseline.index):
             raise EvidenceGenerationError(f"Prediction rows are not paired for {model_name}")
@@ -822,6 +838,39 @@ def _validate_frozen_adaptability_protocol(config: ExperimentConfig) -> None:
             "min_valid_bootstrap_fraction": 0.90,
             "bootstrap_seed": 214764,
         },
+        # v3 re-anchors v2's collection window only; every frozen adaptability
+        # parameter below is identical to v2 (see config/experiment_10_days_v3.json).
+        "iac26-10d-v3": {
+            "train_time_fraction": 0.40,
+            "adaptability_block_hours": 12.0,
+            "adaptability_embargo_hours": 2.0,
+            "adaptability_min_blocks": 10,
+            "adaptability_min_unique_objects": 30,
+            "adaptability_min_pairs": 30,
+            "adaptability_min_positive_pairs_per_block": 5,
+            "adaptability_min_positive_days_per_block": 1,
+            "adaptability_bootstrap_replicates": 10000,
+            "confidence_level": 0.95,
+            "min_valid_bootstrap_fraction": 0.90,
+            "bootstrap_seed": 214764,
+        },
+        # v5 is an independent confirmation experiment. It preserves the v2/v3
+        # inference contract while changing only the pre-registered acquisition
+        # window and cadence mechanics.
+        "iac26-15d-v5": {
+            "train_time_fraction": 0.40,
+            "adaptability_block_hours": 12.0,
+            "adaptability_embargo_hours": 2.0,
+            "adaptability_min_blocks": 10,
+            "adaptability_min_unique_objects": 30,
+            "adaptability_min_pairs": 30,
+            "adaptability_min_positive_pairs_per_block": 5,
+            "adaptability_min_positive_days_per_block": 1,
+            "adaptability_bootstrap_replicates": 10000,
+            "confidence_level": 0.95,
+            "min_valid_bootstrap_fraction": 0.90,
+            "bootstrap_seed": 214764,
+        },
     }
     frozen = frozen_by_experiment.get(config.experiment_id)
     if frozen is None:
@@ -898,8 +947,8 @@ def adaptability_inference_from_predictions(
         raise EvidenceGenerationError(
             "Adaptability inference requires one prediction per method and source row"
         )
-    primary = primary.set_index("source_row_id", verify_integrity=True)
-    baseline = baseline.set_index("source_row_id", verify_integrity=True)
+    primary = _index_by_unique_row_id(primary)
+    baseline = _index_by_unique_row_id(baseline)
     if set(primary.index) != set(baseline.index):
         raise EvidenceGenerationError(
             "Adaptability primary and baseline prediction rows are not paired"
@@ -1491,8 +1540,10 @@ def _generate_evaluation_evidence_files(
         ):
             raise EvidenceGenerationError(
                 "Frozen cadence gate failed: "
-                f"coverage={coverage:.6f}/{config.min_snapshot_coverage_fraction:.6f}, "
-                f"max_gap_hours={max_gap:.6f}/{config.max_snapshot_gap_hours:.6f}, "
+                f"coverage={coverage:.6f}/"
+                f"{config.min_snapshot_coverage_fraction:.6f}, "
+                f"max_gap_hours={max_gap:.6f}/"
+                f"{config.max_snapshot_gap_hours:.6f}, "
                 f"tle_hash_diversity={tle_diversity:.6f}/"
                 f"{config.min_tle_hash_diversity_fraction:.6f}, "
                 f"identical_hash_run={identical_hash_run}/"
@@ -1565,25 +1616,19 @@ def _generate_evaluation_evidence_files(
             "inner_validation": inner.test,
         }.items()
     }
-    partition_tle_failures = []
+    partition_tle_failures: list[str] = []
     for name, quality in partition_tle_quality.items():
-        if (
-            quality["tle_input_hash_diversity_fraction"]
-            < config.min_tle_hash_diversity_fraction
-        ):
+        diversity = float(quality["tle_input_hash_diversity_fraction"])
+        identical_run = int(quality["max_identical_tle_hash_run_bins"])
+        if diversity < config.min_tle_hash_diversity_fraction:
             partition_tle_failures.append(
-                f"{name}.tle_hash_diversity="
-                f"{quality['tle_input_hash_diversity_fraction']:.6f} < "
-                f"{config.min_tle_hash_diversity_fraction:.6f}"
+                f"{name}.tle_input_hash_diversity_fraction={diversity:.6f} < "
+                f"required={config.min_tle_hash_diversity_fraction:.6f}"
             )
-        if (
-            quality["max_identical_tle_hash_run_bins"]
-            > config.max_identical_tle_hash_run_bins
-        ):
+        if identical_run > config.max_identical_tle_hash_run_bins:
             partition_tle_failures.append(
-                f"{name}.identical_hash_run="
-                f"{quality['max_identical_tle_hash_run_bins']} > "
-                f"{config.max_identical_tle_hash_run_bins}"
+                f"{name}.max_identical_tle_hash_run_bins={identical_run} > "
+                f"allowed={config.max_identical_tle_hash_run_bins}"
             )
     if partition_tle_failures:
         raise EvidenceGenerationError(
