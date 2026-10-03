@@ -99,7 +99,9 @@ train/test split; use these commands to exercise the pipeline against live
 data, not to reproduce the paper's headline result.
 
 ## Active claim-eligible experiment (15-day v5)
-
+**Frozen training dataset (v3)**: the exact resimulated conjunction history and
+report used for the results reported in the paper are published as a GitHub
+Release: [v1.0-iac26-frozen-data](https://github.com/Mustafaisa027/space-debris-ml-simulation/releases/tag/v1.0-iac26-frozen-data)
 The prospective frozen protocol is `iac26-15d-v5`, running from
 2026-08-16T00:17:00Z through 2026-08-31T00:17:00Z. It contains 120 half-open
 three-hour slots, requires 90% coverage, and stores schema-3 bundles under
