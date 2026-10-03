@@ -23,3 +23,10 @@ Thumbs.db
 /cd
 /dir
 /tmp/
+
+# Unrelated project files
+_repo_analysis/
+gelidonya_worktree/
+*.param
+codex_gui_prompt_pyqt.md
+COMMIT_MESSAGE.txt
